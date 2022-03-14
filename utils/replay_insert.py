@@ -2,29 +2,36 @@
 # NOTE: An emergency tool for situations where score
 # will not get submitted.
 import sys
-from cli_utils import perform_startup_requirements, get_loop
-from globals import caches
 import traceback
-from libs.time import get_timestamp
-from objects.stats import Stats
-from objects.score import Score
-from logger import error, info
-from helpers.user import safe_name
-from globals.connections import sql
-from constants.c_modes import CustomModes
-from constants.modes import Mode
-from constants.mods import Mods
-from constants.actions import Actions
-from constants.complete import Completed
-from constants.privileges import Privileges
-from constants.statuses import Status
-from objects.beatmap import Beatmap
-from osupyparser import ReplayFile
-from helpers.user import update_country_lb_pos, update_lb_pos, edit_user
-from helpers.replays import write_replay
+
+from anticheat.anticheat import surpassed_cap_restrict
+from anticheat.constants.actions import Actions
+from beatmaps.beatmap import Beatmap
+from beatmaps.constants.statuses import Status
+from cli_utils import get_loop
+from cli_utils import perform_startup_requirements
+from db.redis.handlers.pep import notify_new_score
+from db.redis.handlers.pep import stats_refresh
 from libs.bin import BinaryWriter
-from helpers.anticheat import surpassed_cap_restrict
-from helpers.pep import stats_refresh, notify_new_score
+from libs.time import get_timestamp
+from osupyparser import ReplayFile
+from scores.constants.c_modes import CustomModes
+from scores.constants.complete import Completed
+from scores.constants.modes import Mode
+from scores.constants.mods import Mods
+from scores.replays.helper import write_replay
+from scores.score import Score
+from state import cache
+from state.connection import sql
+from user.constants.privileges import Privileges
+from user.helper import edit_user
+from user.helper import safe_name
+from user.helper import update_country_lb_pos
+from user.helper import update_lb_pos
+from user.stats import Stats
+
+from logger import error
+from logger import info
 
 
 async def insert_replay_data(replay_path: str):
@@ -36,7 +43,7 @@ async def insert_replay_data(replay_path: str):
         error("Replay was unable to parse! " + traceback.format_exc())
         raise SystemExit(1)
 
-    user_id = await caches.name.id_from_safe(safe_name(replay.player_name))
+    user_id = await cache.name.id_from_safe(safe_name(replay.player_name))
     if not replay.player_name or not user_id:
         error("Player of replay couldn't be found!")
         raise SystemExit(1)
@@ -47,7 +54,7 @@ async def insert_replay_data(replay_path: str):
     c_mode = CustomModes.from_mods(mods, mode)
     bmap = await Beatmap.from_md5(replay.map_md5)
     stats = await Stats.from_id(user_id, mode, c_mode)
-    privs = await caches.priv.get_privilege(user_id)
+    privs = await cache.priv.get_privilege(user_id)
 
     if not bmap:
         error("Score insert failed due to no beatmap being attached.")
@@ -85,7 +92,9 @@ async def insert_replay_data(replay_path: str):
 
     if s.mods.conflict():
         await edit_user(
-            Actions.RESTRICT, s.user_id, "Illegal mod combo (score submitter)."
+            Actions.RESTRICT,
+            s.user_id,
+            "Illegal mod combo (score submitter).",
         )
         error(f"Restricted user for 'Illegal mod combo (score submitter).'")
         raise SystemExit(1)
@@ -164,7 +173,9 @@ async def insert_replay_data(replay_path: str):
         data = stream.read()
 
     lzma_off = int.from_bytes(  # Read int16
-        data[current_off : current_off + 4], "little", signed=True
+        data[current_off : current_off + 4],
+        "little",
+        signed=True,
     )
     replay_raw_data = data[current_off + 4 : current_off + 4 + lzma_off]
     await write_replay(s.id, replay_raw_data, s.c_mode)
@@ -183,7 +194,9 @@ async def insert_replay_data(replay_path: str):
     # More anticheat checks.
     if s.completed == Completed.BEST and await surpassed_cap_restrict(s):
         await edit_user(
-            Actions.RESTRICT, s.user_id, f"Surpassing PP cap as unverified! ({s.pp}pp)"
+            Actions.RESTRICT,
+            s.user_id,
+            f"Surpassing PP cap as unverified! ({s.pp}pp)",
         )
         error(f"Restricted user for 'Surpassing PP cap as unverified! ({s.pp}pp)'")
         raise SystemExit(1)
@@ -196,7 +209,7 @@ def invalid_args_err(info: str) -> None:
 
     error(
         "Supplied incorrect arguments!\n" + info + "\nConsult the README.md "
-        "for documentation of proper usage!"
+        "for documentation of proper usage!",
     )
     raise SystemExit(1)
 
@@ -216,7 +229,7 @@ def parse_args() -> dict:
         invalid_args_err("Invalid argument types supplied!")
     except IndexError:
         invalid_args_err(
-            f"Expected 1 command arguments to be supplied (received {arg_count})"
+            f"Expected 1 command arguments to be supplied (received {arg_count})",
         )
 
     return {"replay_path": replay_path}
