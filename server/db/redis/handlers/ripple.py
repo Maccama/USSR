@@ -1,15 +1,9 @@
 # Support for ripple's pubsub handlers. These are featured in **all** ripple
 # based servers.
-from globals.caches import leaderboards
-from globals.caches import name
-from globals.caches import password
-from globals.caches import priv
-from user.constants.privileges import Privileges
+import orjson
 
-try:
-    from orjson import loads as j_load
-except ImportError:
-    from json import loads as j_load
+from server.constants.privileges import Privileges
+from server.state import cache
 
 
 async def _update_singular(md5: str) -> None:
@@ -39,7 +33,7 @@ async def beatmap_update_pubsub(data: bytes) -> None:
     """
 
     # Parse JSON formatted data.
-    j_data = j_load(data)
+    j_data = orjson.loads(data)
     ...
 
 
@@ -50,14 +44,14 @@ async def username_change_pubsub(data: bytes):
     """
 
     # Parse JSON formatted data.
-    j_data = j_load(data)
+    j_data = orjson.loads(data)
 
     user_id = int(j_data["userID"])
     new_username = j_data["newUsername"]
 
-    await name.load_from_id(user_id)
+    await cache.name.load_from_id(user_id)
 
-    for leaderboard in leaderboards.get_all_items():
+    for leaderboard in cache.leaderboards.get_all_items():
         if leaderboard.user_has_score(user_id):
             leaderboard.change_username(user_id, new_username)
 
@@ -69,7 +63,7 @@ async def update_cached_privileges_pubsub(data: bytes):
     """
 
     user_id = int(data.decode())
-    await priv.load_singular(user_id)
+    await cache.priv.load_singular(user_id)
 
 
 async def change_pass_pubsub(data: bytes):
@@ -78,10 +72,10 @@ async def change_pass_pubsub(data: bytes):
     It refreshes the cached password for the user.
     """
 
-    j_data = j_load(data)
+    j_data = orjson.loads(data)
     user_id = int(j_data["userID"])
 
-    password.drop_cache_individual(user_id)
+    cache.password.drop_cache_individual(user_id)
 
 
 async def ban_reload_pubsub(data: bytes):
@@ -91,9 +85,9 @@ async def ban_reload_pubsub(data: bytes):
     """
 
     user_id = int(data.decode())
-    await priv.load_singular(user_id)
+    await cache.priv.load_singular(user_id)
 
     # If they have been restricted, we clear all leaderboard with them in.
-    if not await priv.get_privilege(user_id) & Privileges.USER_PUBLIC:
-        for leaderboard in leaderboards.get_all_items():
+    if not await cache.priv.get_privilege(user_id) & Privileges.USER_PUBLIC:
+        for leaderboard in cache.leaderboards.get_all_items():
             await leaderboard.refresh()

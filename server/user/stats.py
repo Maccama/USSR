@@ -1,14 +1,15 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Optional
 
-from db.redis.handlers.pep import stats_refresh
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from state.cache import stats_cache
-from state.connection import sql
-from user.helper import get_rank_redis
-
-from logger import debug
+import logger
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.db.redis.handlers.pep import stats_refresh
+from server.state import cache
+from server.state import services
+from server.user.helper import get_rank_redis
 
 
 @dataclass
@@ -38,7 +39,7 @@ class Stats:
         user_id: int,
         mode: Mode,
         c_mode: CustomModes,
-    ) -> Optional["Stats"]:
+    ) -> Optional[Stats]:
         """Fetches user stats directly from the MySQL database.
 
         Args:
@@ -47,18 +48,19 @@ class Stats:
             c_mode (CustomMode): The custom mode to fetch the data for.
         """
 
-        stats_db = await sql.fetchone(
+        stats_db = await services.sql.fetch_one(
             (
                 "SELECT ranked_score_{m}, total_score_{m}, pp_{m}, avg_accuracy_{m}, "
-                "playcount_{m}, max_combo_{m}, total_hits_{m} FROM {p}_stats WHERE id = %s LIMIT 1"
+                "playcount_{m}, max_combo_{m}, total_hits_{m} FROM {p}_stats WHERE id = :id LIMIT 1"
             ).format(m=mode.to_db_str(), p=c_mode.db_prefix),
-            (user_id,),
+            {"id": user_id},
         )
+
         if not stats_db:
             return
-        rank = await get_rank_redis(user_id, mode, c_mode)
 
-        debug(f"Retrieved stats for {user_id} from the MySQL database.")
+        rank = await get_rank_redis(user_id, mode, c_mode)
+        logger.debug(f"Retrieved stats for {user_id} from the MySQL database.")
 
         return Stats(
             user_id,
@@ -80,7 +82,7 @@ class Stats:
         user_id: int,
         mode: Mode,
         c_mode: CustomModes,
-    ) -> Optional["Stats"]:
+    ) -> Optional[Stats]:
         """Attempts to fetch an existing stats object from the global stats cache.
 
         Args:
@@ -89,10 +91,10 @@ class Stats:
             c_mode (CustomMode): The custom mode to fetch the data for.
         """
 
-        s = stats_cache.get((c_mode, mode, user_id))
-
+        s = cache.stats_cache.get((c_mode, mode, user_id))
         if s:
-            debug(f"Fetched stats for {user_id} from cache!")
+            logger.debug(f"Fetched stats for {user_id} from cache!")
+
         return s
 
     @classmethod
@@ -101,7 +103,7 @@ class Stats:
         user_id: int,
         mode: Mode,
         c_mode: CustomModes,
-    ) -> Optional["Stats"]:
+    ) -> Optional[Stats]:
         """High level classmethod that attempts to fetch the stats from all
         possible sources, ordered from fastest to slowest.
 
@@ -121,7 +123,7 @@ class Stats:
     def cache(self) -> None:
         """Caches the current stats object to the global stats cache."""
 
-        stats_cache.cache((self.c_mode, self.mode, self.user_id), self)
+        cache.stats_cache.cache((self.c_mode, self.mode, self.user_id), self)
 
     async def recalc_pp_acc_full(self, _run_pp: int = None) -> tuple[float, float]:
         """Recalculates the full PP amount and average accuract for a user
@@ -148,17 +150,19 @@ class Stats:
         ):
             self.pp -= self._cur_bonus_pp
             self.pp += await self.__calc_bonus_pp()  # Calculate the bonus.
-            debug("Bypassed full PP and acc recalc for user: score didnt meet top 100.")
+            logger.debug(
+                "Bypassed full PP and acc recalc for user: score didnt meet top 100.",
+            )
             return
 
-        scores_db = await sql.fetchall(
+        scores_db = await services.sql.fetch_all(
             (
                 "SELECT s.accuracy, s.pp FROM {t} s RIGHT JOIN beatmaps b ON "
                 "s.beatmap_md5 = b.beatmap_md5 WHERE s.completed = 3 AND "
-                "s.play_mode = {m_val} AND b.ranked IN (3,2) AND s.userid = %s "
+                "s.play_mode = {m_val} AND b.ranked IN (3,2) AND s.userid = :id "
                 "ORDER BY s.pp DESC LIMIT 100"
             ).format(t=self.c_mode.db_table, m_val=self.mode.value),
-            (self.user_id,),
+            {"id": self.user_id},
         )
 
         t_acc = 0.0
@@ -188,13 +192,13 @@ class Stats:
             Doesn't set the value in the database.
         """
 
-        max_combo_db = await sql.fetchcol(
+        max_combo_db = await services.sql.fetch_val(
             "SELECT max_combo FROM {t} WHERE play_mode = {m} AND completed = 3 "
-            "AND userid = %s ORDER BY max_combo DESC LIMIT 1".format(
+            "AND userid = :id ORDER BY max_combo DESC LIMIT 1".format(
                 t=self.c_mode.db_table,
                 m=self.mode.value,
             ),
-            (self.user_id,),
+            {"id": self.user_id},
         )
 
         self.max_combo = max_combo_db or 0
@@ -216,13 +220,13 @@ class Stats:
             Performs a generally expensive join.
         """
 
-        count = await sql.fetchcol(
+        count = await services.sql.fetch_val(
             "SELECT COUNT(*) FROM {t} s RIGHT JOIN beatmaps b ON s.beatmap_md5 = "
             "b.beatmap_md5 WHERE b.ranked IN (2, 3) AND "  # Max limit is 25397 to get max bonus pp.
-            "s.completed = 3 AND s.userid = %s AND s.play_mode = %s LIMIT 25397".format(
+            "s.completed = 3 AND s.userid = :id AND s.play_mode = :mode LIMIT 25397".format(
                 t=self.c_mode.db_table,
             ),
-            (self.user_id, self.mode.value),
+            {"id": self.user_id, "mode": self.mode.value},
         )
 
         self._cur_bonus_pp = 416.6667 * (1 - (0.9994**count))
@@ -236,22 +240,22 @@ class Stats:
                 should be refreshed.
         """
 
-        await sql.execute(
+        await services.sql.execute(
             (
-                "UPDATE {table}_stats SET ranked_score_{m} = %s, total_score_{m} = %s,"
-                "pp_{m} = %s, avg_accuracy_{m} = %s, playcount_{m} = %s,"
-                "max_combo_{m} = %s, total_hits_{m} = %s WHERE id = %s LIMIT 1"
+                "UPDATE {table}_stats SET ranked_score_{m} = :ranked_score, total_score_{m} = :total_score,"
+                "pp_{m} = :pp, avg_accuracy_{m} = :accuracy, playcount_{m} = :playcount,"
+                "max_combo_{m} = :max_combo, total_hits_{m} = :total_hits WHERE id = :id LIMIT 1"
             ).format(m=self.mode.to_db_str(), table=self.c_mode.db_prefix),
-            (
-                self.ranked_score,
-                self.total_score,
-                self.pp,
-                self.accuracy,
-                self.playcount,
-                self.max_combo,
-                self.total_hits,
-                self.user_id,
-            ),
+            {
+                "ranked_score": self.ranked_score,
+                "total_score": self.total_score,
+                "pp": self.pp,
+                "accuracy": self.accuracy,
+                "playcount": self.playcount,
+                "max_combo": self.max_combo,
+                "total_hits": self.total_hits,
+                "id": self.user_id,
+            },
         )
 
         if refresh_cache:

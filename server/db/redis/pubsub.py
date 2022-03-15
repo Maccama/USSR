@@ -3,7 +3,8 @@ import asyncio
 from typing import Callable
 
 from aioredis import Channel
-from state.connection import redis
+
+from server.state import services
 
 
 async def wait_for_pub(ch: Channel, h: Callable) -> None:
@@ -25,5 +26,5 @@ async def pubsub_executor(name: str, h: Callable) -> None:
     upon creating it, listening to `publish` events. Upon receival, calls `h`.
     """
 
-    (ch,) = await redis.subscribe(name)
+    (ch,) = await services.redis.subscribe(name)
     asyncio.get_running_loop().create_task(wait_for_pub(ch, h))

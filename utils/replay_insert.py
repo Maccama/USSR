@@ -1,37 +1,36 @@
 # Parses data from replay and inserts it to database
 # NOTE: An emergency tool for situations where score
 # will not get submitted.
+import asyncio
 import sys
 import traceback
 
-from anticheat.anticheat import surpassed_cap_restrict
-from anticheat.constants.actions import Actions
-from beatmaps.beatmap import Beatmap
-from beatmaps.constants.statuses import Status
-from cli_utils import get_loop
 from cli_utils import perform_startup_requirements
-from db.redis.handlers.pep import notify_new_score
-from db.redis.handlers.pep import stats_refresh
-from libs.bin import BinaryWriter
-from libs.time import get_timestamp
 from osupyparser import ReplayFile
-from scores.constants.c_modes import CustomModes
-from scores.constants.complete import Completed
-from scores.constants.modes import Mode
-from scores.constants.mods import Mods
-from scores.replays.helper import write_replay
-from scores.score import Score
-from state import cache
-from state.connection import sql
-from user.constants.privileges import Privileges
-from user.helper import edit_user
-from user.helper import safe_name
-from user.helper import update_country_lb_pos
-from user.helper import update_lb_pos
-from user.stats import Stats
 
-from logger import error
-from logger import info
+import logger
+from server.anticheat.anticheat import surpassed_cap_restrict
+from server.beatmaps.beatmap import Beatmap
+from server.constants.actions import Actions
+from server.constants.c_modes import CustomModes
+from server.constants.complete import Completed
+from server.constants.modes import Mode
+from server.constants.mods import Mods
+from server.constants.privileges import Privileges
+from server.constants.statuses import Status
+from server.db.redis.handlers.pep import notify_new_score
+from server.db.redis.handlers.pep import stats_refresh
+from server.libs.bin import BinaryWriter
+from server.libs.time import get_timestamp
+from server.scores.replays.helper import write_replay
+from server.scores.score import Score
+from server.state import cache
+from server.state import services
+from server.user.helper import edit_user
+from server.user.helper import safe_name
+from server.user.helper import update_country_lb_pos
+from server.user.helper import update_lb_pos
+from server.user.stats import Stats
 
 
 async def insert_replay_data(replay_path: str):
@@ -40,14 +39,14 @@ async def insert_replay_data(replay_path: str):
     try:
         replay = ReplayFile.from_file(replay_path)
     except Exception:
-        error("Replay was unable to parse! " + traceback.format_exc())
+        logger.error("Replay was unable to parse! " + traceback.format_exc())
         raise SystemExit(1)
 
     user_id = await cache.name.id_from_safe(safe_name(replay.player_name))
     if not replay.player_name or not user_id:
-        error("Player of replay couldn't be found!")
+        logger.error("Player of replay couldn't be found!")
         raise SystemExit(1)
-    info("Replay parsed, performing a score submit..")
+    logger.info("Replay parsed, performing a score submit..")
 
     mode = Mode(replay.mode)
     mods = Mods(replay.mods)
@@ -57,7 +56,7 @@ async def insert_replay_data(replay_path: str):
     privs = await cache.priv.get_privilege(user_id)
 
     if not bmap:
-        error("Score insert failed due to no beatmap being attached.")
+        logger.error("Score insert failed due to no beatmap being attached.")
         raise SystemExit(1)
 
     s = Score(
@@ -96,37 +95,45 @@ async def insert_replay_data(replay_path: str):
             s.user_id,
             "Illegal mod combo (score submitter).",
         )
-        error(f"Restricted user for 'Illegal mod combo (score submitter).'")
+        logger.error(f"Restricted user for 'Illegal mod combo (score submitter).'")
         raise SystemExit(1)
 
-    dupe_check = await sql.fetchcol(  # Try to fetch as much similar score as we can.
-        f"SELECT 1 FROM {s.c_mode.db_table} WHERE "
-        "userid = %s AND beatmap_md5 = %s AND score = %s "
-        "AND play_mode = %s AND mods = %s LIMIT 1",
-        (s.user_id, s.bmap.md5, s.score, s.mode.value, s.mods.value),
+    dupe_check = (
+        await services.sql.fetch_val(  # Try to fetch as much similar score as we can.
+            f"SELECT 1 FROM {s.c_mode.db_table} WHERE "
+            "userid = :id AND beatmap_md5 = :md5 AND score = :score "
+            "AND play_mode = :mode AND mods = :mods LIMIT 1",
+            {
+                "id": s.user_id,
+                "md5": s.bmap.md5,
+                "score": s.score,
+                "mode": s.mode.value,
+                "mods": s.mods.value,
+            },
+        )
     )
 
     if dupe_check:
-        error("Score couldn't be inserted due to duplicate check!")
+        logger.error("Score couldn't be inserted due to duplicate check!")
         raise SystemExit(1)
 
-    info("Fetching previous best to compare..")
-    prev_db = await sql.fetchone(
-        f"SELECT id FROM {stats.c_mode.db_table} WHERE userid = %s AND "
-        f"beatmap_md5 = %s AND completed = 3 AND play_mode = {s.mode.value} LIMIT 1",
-        (s.user_id, s.bmap.md5),
+    logger.info("Fetching previous best to compare..")
+    prev_db = await services.sql.fetch_one(
+        f"SELECT id FROM {stats.c_mode.db_table} WHERE userid = :id AND "
+        "beatmap_md5 = :md5 AND completed = 3 AND play_mode = :mode LIMIT 1",
+        {"id": s.user_id, "md5": s.bmap.md5, "mode": s.mode.value},
     )
 
     prev_score = await Score.from_db(prev_db[0], s.c_mode) if prev_db else None
 
-    info("Submitting score..")
+    logger.info("Submitting score..")
     await s.submit()
 
-    info("Incrementing bmap playcount.")
+    logger.info("Incrementing bmap playcount.")
     await s.bmap.increment_playcount(s.passed)
 
     # Stat updates
-    info("Updating stats..")
+    logger.info("Updating stats..")
     stats.playcount += 1
     stats.total_score += s.score
     stats.total_hits += s.count_300 + s.count_100 + s.count_50
@@ -141,13 +148,13 @@ async def insert_replay_data(replay_path: str):
         if stats.max_combo < s.max_combo:
             stats.max_combo = s.max_combo
         if s.completed == Completed.BEST and s.pp:
-            info("Performing PP recalculation..")
+            logger.info("Performing PP recalculation..")
             await stats.recalc_pp_acc_full(s.pp)
-    info("Saving stats..")
+    logger.info("Saving stats..")
     await stats.save()
 
     # This is probably the most cursed way to do it.
-    info("Building and saving replay data..")
+    logger.info("Building and saving replay data..")
     r = (
         BinaryWriter()
         .write_u8_le(replay.mode)
@@ -182,7 +189,7 @@ async def insert_replay_data(replay_path: str):
 
     # Update our position on the global lbs.
     if s.completed is Completed.BEST and privs & Privileges.USER_PUBLIC:
-        info("Updating user's global and country lb positions...")
+        logger.info("Updating user's global and country lb positions...")
         args = (s.user_id, round(stats.pp), s.mode, s.c_mode)
         await update_lb_pos(*args)
         await update_country_lb_pos(*args)
@@ -198,7 +205,9 @@ async def insert_replay_data(replay_path: str):
             s.user_id,
             f"Surpassing PP cap as unverified! ({s.pp}pp)",
         )
-        error(f"Restricted user for 'Surpassing PP cap as unverified! ({s.pp}pp)'")
+        logger.error(
+            f"Restricted user for 'Surpassing PP cap as unverified! ({s.pp}pp)'",
+        )
         raise SystemExit(1)
 
     await notify_new_score(s.id)
@@ -207,7 +216,7 @@ async def insert_replay_data(replay_path: str):
 def invalid_args_err(info: str) -> None:
     """Displays an error and closes the program."""
 
-    error(
+    logger.error(
         "Supplied incorrect arguments!\n" + info + "\nConsult the README.md "
         "for documentation of proper usage!",
     )
@@ -238,10 +247,10 @@ def parse_args() -> dict:
 def main():
     """Core functionality of the CLI."""
 
-    info("Loading Replay Inserter...")
+    logger.info("Loading Replay Inserter...")
 
     # Make sure server is prepared for operation.
-    loop = get_loop()
+    loop = asyncio.get_event_loop()
     perform_startup_requirements()
 
     # Parse cli data
@@ -249,7 +258,8 @@ def main():
 
     # Perform our recalc and close.
     loop.run_until_complete(insert_replay_data(**data_parsed))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

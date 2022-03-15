@@ -2,11 +2,10 @@
 import random
 from typing import Union
 
-from libs.time import Timer
-from web.client.client import simple_get_json
-
-from config import config
-from logger import debug
+import logger
+from server import config
+from server.libs.time import Timer
+from server.state import services
 
 BASE_URL = "http://old.ppy.sh/api/"
 
@@ -23,7 +22,7 @@ class OsuApiManager:
         """
 
         self.base_url = base_url
-        self.key_pool = config.API_KEYS_POOL
+        self.key_pool = config.BANCHO_API_KEYS_POOL
 
     def get_key(self) -> str:
         """A sort of load balancer between the keys to make sure the usage
@@ -59,8 +58,10 @@ class OsuApiManager:
         if require_key:
             args["k"] = self.get_key()
 
-        res = await simple_get_json(BASE_URL + endpoint, args)
-        debug(f"osu!api request to {endpoint} took {t.time_str()} seconds.")
+        async with services.web.get(BASE_URL + endpoint, args) as resp:
+            res = await resp.json()
+
+        logger.debug(f"osu!api request to {endpoint} took {t.time_str()} seconds.")
         return res
 
     # Common osu!api endpoints.

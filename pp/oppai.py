@@ -5,10 +5,10 @@ from typing import Optional
 from typing import Type
 from typing import TYPE_CHECKING
 
-from beatmaps.helper import fetch_osu_file
+from server.beatmaps.helper import fetch_osu_file
 
 if TYPE_CHECKING:
-    from scores.score import Score
+    from server.scores.score import Score
     from pathlib import Path
 
 

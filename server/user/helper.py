@@ -1,20 +1,16 @@
-# Helps with users LOL
 import time
 from typing import Optional
 
-from anticheat.constants.actions import Actions
-from api.discord import log_user_edit
-from libs.time import get_timestamp
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from state.cache import name
-from state.cache import priv
-from state.connection import redis
-from state.connection import sql
-from user.constants.privileges import Privileges
-
-from ..db.redis.handlers.pep import notify_ban
-from logger import info
+import logger
+from server.api.discord import log_user_edit
+from server.constants.actions import Actions
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.constants.privileges import Privileges
+from server.db.redis.handlers.pep import notify_ban
+from server.libs.time import get_timestamp
+from server.state import cache
+from server.state import services
 
 
 def safe_name(s: str) -> str:
@@ -52,7 +48,10 @@ async def get_rank_redis(
 
     mode_str = gamemode.to_db_str()
     suffix = c_mode.to_db_suffix()
-    rank = await redis.zrevrank(f"ripple:leaderboard{suffix}:{mode_str}", user_id)
+    rank = await services.redis.zrevrank(
+        f"ripple:leaderboard{suffix}:{mode_str}",
+        user_id,
+    )
     return int(rank) + 1 if rank else None
 
 
@@ -60,12 +59,12 @@ async def incr_replays_watched(user_id: int, mode: Mode) -> None:
     """Increments the replays watched statistic for the user on a given mode."""
 
     suffix = mode.to_db_str()
-    await sql.execute(
+    await services.sql.execute(
         (
             "UPDATE users_stats SET replays_watched_{0} = replays_watched_{0} + 1 "
-            "WHERE id = %s LIMIT 1"
+            "WHERE id = :id LIMIT 1"
         ).format(suffix),
-        (user_id,),
+        {"id": user_id},
     )
 
 
@@ -73,28 +72,28 @@ async def get_achievements(user_id: int):
     """Gets all user unlocked achievements from sql."""
     return [
         ach[0]
-        for ach in await sql.fetchall(
-            "SELECT achievement_id FROM users_achievements WHERE user_id = %s",
-            (user_id,),
+        for ach in await services.sql.fetch_all(
+            "SELECT achievement_id FROM users_achievements WHERE user_id = :id",
+            {"id": user_id},
         )
     ]
 
 
 async def get_friends(user_id: int) -> list[int]:
     """Fetches the user IDs of users which are friends of the user"""
-    friends_db = await sql.fetchall(
-        "SELECT user2 FROM users_relationships WHERE user1 = %s",
-        (user_id,),
+    friends_db = await services.sql.fetch_all(
+        "SELECT user2 FROM users_relationships WHERE user1 = :id",
+        {"id": user_id},
     )
     return [friend[0] for friend in friends_db]
 
 
 async def unlock_achievement(user_id: int, ach_id: int):
     """Adds the achievement to database."""
-    await sql.execute(
+    await services.sql.execute(
         "INSERT INTO users_achievements (user_id, achievement_id, `time`) VALUES"
-        "(%s, %s, %s)",
-        (user_id, ach_id, int(time.time())),
+        "(:id, :achid, :time)",
+        {"id": user_id, "achid": ach_id, "time": int(time.time())},
     )
 
 
@@ -105,17 +104,20 @@ async def edit_user(
 ) -> None:
     """Edits the user on the server."""
 
-    await priv.load_singular(user_id)
-    privs = await priv.get_privilege(user_id)
+    await cache.priv.load_singular(user_id)
+    privs = await cache.priv.get_privilege(user_id)
 
     if action in (Actions.UNRESTRICT, Actions.UNBAN) and (
         privs.is_banned or privs.is_restricted
     ):
         # Unrestrict procedure.
-        await sql.execute(
-            "UPDATE users SET privileges = privileges | %s, "
-            "ban_datetime = 0, ban_reason = '' WHERE id = %s LIMIT 1",
-            (int(Privileges.USER_NORMAL | Privileges.USER_PUBLIC), user_id),
+        await services.sql.execute(
+            "UPDATE users SET privileges = privileges | :privs, "
+            "ban_datetime = 0, ban_reason = '' WHERE id = :id LIMIT 1",
+            {
+                "privs": int(Privileges.USER_NORMAL | Privileges.USER_PUBLIC),
+                "id": user_id,
+            },
         )
         await notify_ban(user_id)
 
@@ -128,10 +130,10 @@ async def edit_user(
             if action == Actions.RESTRICT
             else int(~(Privileges.USER_NORMAL | Privileges.USER_PUBLIC))
         )
-        await sql.execute(
-            "UPDATE users SET privileges = privileges & %s, "
-            "ban_datetime = %s, ban_reason = %s WHERE id = %s LIMIT 1",
-            (perms, int(time.time()), reason, user_id),
+        await services.sql.execute(
+            "UPDATE users SET privileges = privileges & :privs, "
+            "ban_datetime = :time, ban_reason = :reason WHERE id = :id LIMIT 1",
+            {"privs": perms, "time": int(time.time()), "reason": reason, "id": user_id},
         )
 
         # Notify pep.py about that.
@@ -140,22 +142,22 @@ async def edit_user(
         # Do lbs cleanups in redis.
         await remove_user_from_leaderboards(user_id)
 
-    username = await name.name_from_id(user_id)
-    await sql.update(
+    username = await cache.name.name_from_id(user_id)
+    await services.sql.execute(
         "INSERT INTO rap_logs (userid, text, datetime, "
-        "through) VALUES (%s, %s, UNIX_TIMESTAMP(), %s)",
-        (
-            999,
-            f"has {action.log_action} user {username} for '{reason}'",
-            "USSR Score Server",
-        ),
+        "through) VALUES (:id, :text, UNIX_TIMESTAMP(), :via)",
+        {
+            "id": 999,
+            "text": f"has {action.log_action} user {username} for '{reason}'",
+            "via": "USSR Score Server",
+        },
     )
 
     await log_user_edit(user_id, username, action, reason)
 
     # Lastly reload perms.
-    await priv.load_singular(user_id)
-    info(f"User ID {user_id} has been {action.log_action}!")
+    await cache.priv.load_singular(user_id)
+    logger.info(f"User ID {user_id} has been {action.log_action}!")
 
 
 async def remove_user_from_leaderboards(user_id: int) -> None:
@@ -165,13 +167,13 @@ async def remove_user_from_leaderboards(user_id: int) -> None:
     country = await fetch_user_country(user_id)
     uid = str(user_id)
     for mode in ("std", "taiko", "ctb", "mania"):
-        await redis.zrem(f"ripple:leaderboard:{mode}", uid)
-        await redis.zrem(f"ripple:leaderboard_relax:{mode}", uid)
-        await redis.zrem(f"ripple:leaderboard_ap:{mode}", uid)
+        await services.redis.zrem(f"ripple:leaderboard:{mode}", uid)
+        await services.redis.zrem(f"ripple:leaderboard_relax:{mode}", uid)
+        await services.redis.zrem(f"ripple:leaderboard_ap:{mode}", uid)
         if country and (c := country.lower()) != "xx":
-            await redis.zrem(f"ripple:leaderboard:{mode}:{c}", uid)
-            await redis.zrem(f"ripple:leaderboard_relax:{mode}:{c}", uid)
-            await redis.zrem(f"ripple:leaderboard_ap:{mode}:{c}", uid)
+            await services.redis.zrem(f"ripple:leaderboard:{mode}:{c}", uid)
+            await services.redis.zrem(f"ripple:leaderboard_relax:{mode}:{c}", uid)
+            await services.redis.zrem(f"ripple:leaderboard_ap:{mode}:{c}", uid)
 
 
 async def fetch_user_country(user_id: int) -> Optional[str]:
@@ -183,9 +185,9 @@ async def fetch_user_country(user_id: int) -> Optional[str]:
     Returns the Alpha2 country code if found, else `None`.
     """
 
-    return await sql.fetchcol(
-        "SELECT country FROM users_stats WHERE id = %s LIMIT 1",
-        (user_id,),
+    return await services.sql.fetch_val(
+        "SELECT country FROM users_stats WHERE id = :id LIMIT 1",
+        {"id": user_id},
     )
 
 
@@ -202,10 +204,17 @@ async def log_user_error(
 
     ts = get_timestamp()
 
-    await sql.execute(
+    await services.sql.execute(
         "INSERT INTO client_err_logs (user_id, timestamp, traceback, config, "
-        "osu_ver, osu_hash) VALUES (%s,%s,%s,%s,%s,%s)",
-        (user_id, ts, traceback, config, osu_ver, osu_hash),
+        "osu_ver, osu_hash) VALUES (:id, :time, :traceback, :config, :ver, :hash)",
+        {
+            "id": user_id,
+            "time": ts,
+            "traceback": traceback,
+            "config": config,
+            "ver": osu_ver,
+            "hash": osu_hash,
+        },
     )
 
 
@@ -224,7 +233,7 @@ async def update_lb_pos(user_id: int, pp: int, mode: Mode, c_mode: CustomModes) 
     if not pp:
         return
     key = f"ripple:leaderboard{c_mode.to_db_suffix()}:{mode.to_db_str()}"
-    await redis.zadd(key, pp, user_id)
+    await services.redis.zadd(key, pp, user_id)
 
 
 async def update_country_lb_pos(
@@ -256,7 +265,7 @@ async def update_country_lb_pos(
         return
 
     key = f"ripple:leaderboard{c_mode.to_db_suffix()}:{mode.to_db_str()}:{country}"
-    await redis.zadd(key, pp, user_id)
+    await services.redis.zadd(key, pp, user_id)
 
 
 async def update_last_active(user_id: int) -> None:
@@ -264,7 +273,7 @@ async def update_last_active(user_id: int) -> None:
 
     ts = get_timestamp()
 
-    await sql.execute(
-        "UPDATE users SET latest_activity = %s WHERE id = %s LIMIT 1",
-        (ts, user_id),
+    await services.sql.execute(
+        "UPDATE users SET latest_activity = :time WHERE id = :id LIMIT 1",
+        {"time": ts, "id": user_id},
     )

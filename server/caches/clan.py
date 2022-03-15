@@ -2,7 +2,7 @@
 from typing import Dict
 from typing import Optional
 
-from state.connection import sql
+from server.state import services
 
 # The clan cache is taken from https://github.com/RealistikOsu/lets/blob/master/helpers/clan_helper.py
 # I wrote it myself for the RealistikOsu lets and this is just an async port.
@@ -34,7 +34,7 @@ class ClanCache:
         self._cached_tags.clear()
 
         # Grab all clan memberships from db.
-        clans_db = await sql.fetchall(
+        clans_db = await services.sql.fetch_all(
             "SELECT uc.user, c.tag FROM user_clans uc "
             "INNER JOIN clans c ON uc.clan = c.id",
         )
@@ -58,10 +58,10 @@ class ClanCache:
             pass
 
         # Grab their tag.
-        clan_db = await sql.fetchcol(
+        clan_db = await services.sql.fetch_val(
             "SELECT c.tag FROM clans c INNER JOIN "
-            "user_clans uc ON c.id = uc.clan WHERE uc.user = %s LIMIT 1",
-            (user_id,),
+            "user_clans uc ON c.id = uc.clan WHERE uc.user = :id LIMIT 1",
+            {"id": user_id},
         )
 
         if not clan_db:

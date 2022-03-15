@@ -1,19 +1,16 @@
+from __future__ import annotations
+
 import traceback
 from dataclasses import dataclass
 from typing import Optional
 
-from beatmaps.constants.statuses import Status
-from beatmaps.helper import delete_osu_file
-from libs.time import get_timestamp
-from scores.constants.modes import Mode
-from state.cache import add_nocheck_md5
-from state.cache import beatmaps
-from state.connection import oapi
-from state.connection import sql
-
-from logger import debug
-from logger import error
-from logger import info
+import logger
+from server.beatmaps.helper import delete_osu_file
+from server.constants.modes import Mode
+from server.constants.statuses import Status
+from server.libs.time import get_timestamp
+from server.state import cache
+from server.state import services
 
 TWO_MONTHS = 5.256e6
 
@@ -72,7 +69,7 @@ class Beatmap:
 
     ## CLASSMETHODS
     @classmethod
-    async def from_oapi_v1(cls, md5: str) -> Optional["Beatmap"]:
+    async def from_oapi_v1(cls, md5: str) -> Optional[Beatmap]:
         """Attempts to create an instance of `Beatmap` using data fetched from
         the osu!api v1.
 
@@ -89,17 +86,19 @@ class Beatmap:
             Instance of `Beatmap` on successful fetch. Else `None`.
         """
 
-        debug(f"Starting osu!api v1 fetch of beatmap {md5}")
+        logger.debug(f"Starting osu!api v1 fetch of beatmap {md5}")
         try:
-            found_beatmaps = await oapi.get_bmap_from_md5(md5)
+            found_beatmaps = await services.oapi.get_bmap_from_md5(md5)
         except Exception:
-            return error(
+            return logger.error(
                 "Failed to fetch map from the osu!api. " + traceback.format_exc(),
             )
+
         if not found_beatmaps:
-            return debug(f"Beatmap {md5} not found in the api.")
+            return logger.debug(f"Beatmap {md5} not found in the api.")
+
         (map_json,) = found_beatmaps
-        debug(f"Beatmap fetched from the osu!api v1!\n {map_json!r}")
+        logger.debug(f"Beatmap fetched from the osu!api v1!\n {map_json!r}")
 
         # Create the object
         bmap = cls.from_oapi_v1_dict(map_json)
@@ -118,20 +117,20 @@ class Beatmap:
         """
 
         # This query is not very fun...
-        map_db = await sql.fetchone(
+        map_db = await services.sql.fetch_one(
             "SELECT beatmap_id, beatmapset_id, beatmap_md5, song_name, ar, od, "
             "mode, rating, difficulty_std, difficulty_taiko, difficulty_ctb, "
             "difficulty_mania, max_combo, hit_length, bpm, playcount, passcount, "
             "ranked, latest_update, ranked_status_freezed FROM beatmaps WHERE "
-            "beatmap_md5 = %s LIMIT 1",
-            (md5,),
+            "beatmap_md5 = :md5 LIMIT 1",
+            {"md5": md5},
         )
 
         # Not found check.
         if not map_db:
             return
 
-        debug("Beatmap fetched from the MySQL database.")
+        logger.debug("Beatmap fetched from the MySQL database.")
 
         return cls(
             id=map_db[0],
@@ -157,7 +156,7 @@ class Beatmap:
         )
 
     @classmethod
-    async def from_cache(self, md5: str) -> Optional["Beatmap"]:
+    async def from_cache(self, md5: str) -> Optional[Beatmap]:
         """Tries to fetch an existing instance of `Beatmap` from the global
         Beatmap cache.
 
@@ -168,10 +167,10 @@ class Beatmap:
             Instance of `Beatmap` on successful fetch. Else `None`.
         """
 
-        return beatmaps.get(md5)
+        return cache.beatmaps.get(md5)
 
     @classmethod
-    async def from_md5(_, md5: str) -> Optional["Beatmap"]:
+    async def from_md5(_, md5: str) -> Optional[Beatmap]:
         """Attempts to create/fetch an instance of beatmap using multiple
         sources ordered by speed. High level API.
 
@@ -205,12 +204,12 @@ class Beatmap:
 
         if not self.id:
             raise ValueError("Unloaded beatmaps (id = 0) may not be cached!")
-        beatmaps.cache(self.md5, self)
+        cache.beatmaps.cache(self.md5, self)
 
     def drop_cache(self) -> None:
         """Drops the beatmap from the global beatmap cache."""
 
-        beatmaps.drop(self.md5)
+        cache.beatmaps.drop(self.md5)
 
     async def delete_db(self) -> None:
         """Deletes all instances of the beatmap from the database.
@@ -219,7 +218,10 @@ class Beatmap:
             This does NOT nuke the set.
         """
 
-        await sql.execute("DELETE FROM beatmaps WHERE beatmap_id = %s", (self.id,))
+        await services.sql.execute(
+            "DELETE FROM beatmaps WHERE beatmap_id = :bid",
+            {"bid": self.id},
+        )
 
     async def insert_db(self, bypass_exist_check: bool = False) -> None:
         """Inserts the beatmap into the MySQL database.
@@ -230,38 +232,41 @@ class Beatmap:
                 performed.
         """
 
-        await sql.execute(
+        await services.sql.execute(
             "INSERT INTO `beatmaps` (`beatmap_id`, `beatmapset_id`, "
             "`beatmap_md5`, `song_name`, `ar`, `od`, `mode`, `rating`, "
             "`difficulty_std`, `difficulty_taiko`, `difficulty_ctb`, "
             "`difficulty_mania`, `max_combo`, `hit_length`, `bpm`, `playcount`, "
             "`passcount`, `ranked`, `latest_update`, `ranked_status_freezed`) VALUES "  # 21
-            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (
-                self.id,
-                self.set_id,
-                self.md5,
-                self.song_name,
-                self.ar,
-                self.od,
-                self.mode.value,
-                self.rating,
-                self.difficulty_std,
-                self.difficulty_taiko,
-                self.difficulty_ctb,
-                self.difficulty_mania,
-                self.max_combo,
-                self.hit_length,
-                self.bpm,
-                self.playcount,
-                self.passcount,
-                self.status.value,
-                self.last_update,
-                int(self.status_frozen),
-            ),
+            "(:id, :set_id, :md5, :song_name, :ar, :od, :mode, :rating, :s_std, :s_taiko, :s_ctb, "
+            ":s_mania, :combo, :hit_len, :bpm, :play, :pass, :status, :update, :frozen)",
+            {
+                "id": self.id,
+                "sid": self.set_id,
+                "md5": self.md5,
+                "song_name": self.song_name,
+                "ar": self.ar,
+                "od": self.od,
+                "mode": self.mode.value,
+                "rating": self.rating,
+                "s_std": self.difficulty_std,
+                "s_taiko": self.difficulty_taiko,
+                "s_ctb": self.difficulty_ctb,
+                "s_mania": self.difficulty_mania,
+                "combo": self.max_combo,
+                "hit_len": self.hit_length,
+                "bpm": self.bpm,
+                "play": self.playcount,
+                "pass": self.passcount,
+                "status": self.status.value,
+                "update": self.last_update,
+                "frozen": int(self.status_frozen),
+            },
         )
 
-        debug(f"Inserted beatmap {self.song_name} ({self.id}) into the database!")
+        logger.debug(
+            f"Inserted beatmap {self.song_name} ({self.id}) into the database!",
+        )
 
     async def increment_playcount(self, passcount: bool = True) -> None:
         """Increments the beatmap playcount for the object and MySQL.
@@ -275,10 +280,10 @@ class Beatmap:
         if passcount:
             self.passcount += 1
 
-        await sql.execute(
-            "UPDATE beatmaps SET passcount = %s, playcount = %s WHERE "
-            "beatmap_md5 = %s LIMIT 1",
-            (self.passcount, self.playcount, self.md5),
+        await services.sql.execute(
+            "UPDATE beatmaps SET passcount = :pass, playcount = :play WHERE "
+            "beatmap_md5 = :md5 LIMIT 1",
+            {"pass": self.passcount, "play": self.playcount, "md5": self.md5},
         )
 
     async def update_last_update(self) -> None:
@@ -287,9 +292,9 @@ class Beatmap:
 
         self.last_update = get_timestamp()
 
-        await sql.execute(
-            "UPDATE beatmaps SET latest_update = %s WHERE beatmap_md5 = %s " "LIMIT 1",
-            (self.last_update, self.md5),
+        await services.sql.execute(
+            "UPDATE beatmaps SET latest_update = :latest WHERE beatmap_md5 = :md5 LIMIT 1",
+            {"latest": self.last_update, "md5": self.md5},
         )
 
     async def update_status(self, status: Status) -> None:
@@ -302,9 +307,9 @@ class Beatmap:
 
         self.status = status
 
-        await sql.execute(
-            "UPDATE beatmaps SET ranked = %s WHERE beatmap_md5 = %s LIMIT 1",
-            (self.status.value, self.md5),
+        await services.sql.execute(
+            "UPDATE beatmaps SET ranked = :ranked WHERE beatmap_md5 = :md5 LIMIT 1",
+            {"ranked": self.status.value, "md5": self.md5},
         )
 
     async def update_frozen_status(self, st: bool) -> None:
@@ -312,9 +317,9 @@ class Beatmap:
 
         self.status_frozen = st
 
-        await sql.execute(
-            "UPDATE beatmaps SET ranked_status_freezed = %s WHERE beatmap_md5 = %s LIMIT 1",
-            (st, self.md5),
+        await services.sql.execute(
+            "UPDATE beatmaps SET ranked_status_freezed = :new_status WHERE beatmap_md5 = :md5 LIMIT 1",
+            {"new_status": st, "md5": self.md5},
         )
 
     async def try_update(self) -> Optional["Beatmap"]:
@@ -323,17 +328,18 @@ class Beatmap:
         deletes the current beatmap from cache and MySQL and inserts the new one.
         Additionally, it will return the new object."""
 
-        debug(f"Fetching update check request for {self.song_name} ({self.id})")
+        logger.debug(f"Fetching update check request for {self.song_name} ({self.id})")
         try:
-            found_beatmaps = await oapi.get_bmap_from_id(self.id)
+            found_beatmaps = await services.oapi.get_bmap_from_id(self.id)
         except Exception:
-            error(
+            logger.error(
                 "Failed to fetch update data from the osu!api. Will try later. "
                 + traceback.format_exc(),
             )
             return None
+
         if not found_beatmaps:
-            debug(
+            logger.debug(
                 f"Beatmap {self.song_name} has been deleted from bancho! "
                 "Keeping in the database and freezing for historical reasons.",
             )
@@ -346,7 +352,7 @@ class Beatmap:
         if map_json["file_md5"] == self.md5 and (
             st == self.status or self.status_frozen
         ):
-            debug("The MD5s of the beatmaps matched! Already up-to-date!")
+            logger.debug("The MD5s of the beatmaps matched! Already up-to-date!")
             await self.update_last_update()
             return None
         elif (
@@ -354,7 +360,7 @@ class Beatmap:
             and st != self.status
             and not self.status_frozen
         ):
-            debug("The MD5s of the beatmaps matched! Updating status.")
+            logger.debug("The MD5s of the beatmaps matched! Updating status.")
             await self.update_status(st)
             await self.update_last_update()
             return None
@@ -372,7 +378,7 @@ class Beatmap:
         self.drop_cache()
 
         # Cache the old one as update available.
-        add_nocheck_md5(self.md5, Status.UPDATE_AVAILABLE)
+        cache.add_nocheck_md5(self.md5, Status.UPDATE_AVAILABLE)
 
         # Create a new object from the new data.
         new_beatmap = Beatmap.from_oapi_v1_dict(map_json)
@@ -381,7 +387,7 @@ class Beatmap:
         await new_beatmap.insert_db()
         new_beatmap.cache()
 
-        info(f"Updated {new_beatmap.song_name} ({new_beatmap.id}) using osu!api")
+        logger.info(f"Updated {new_beatmap.song_name} ({new_beatmap.id}) using osu!api")
 
         return new_beatmap
 

@@ -2,16 +2,16 @@
 from typing import Dict
 from typing import Optional
 
-from libs.crypt import verify_bcrypt
-from state.connection import sql
+from server.libs.crypt import verify_bcrypt
+from server.state import services
 
 
 async def _fetch_bcrypt(user_id: int) -> Optional[str]:
     """Fetches the BCrypt hashed password from SQL."""
 
-    return await sql.fetchcol(
-        "SELECT password_md5 FROM users WHERE id = %s",
-        (user_id,),
+    return await services.sql.fetch_val(
+        "SELECT password_md5 FROM users WHERE id = :id",
+        {"id": user_id},
     )
 
 

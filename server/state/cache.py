@@ -1,19 +1,14 @@
-from typing import TYPE_CHECKING
+from __future__ import annotations
 
-from caches.bcrypt import BCryptCache
-from caches.clan import ClanCache
-from caches.lru_cache import Cache
-from caches.priv import PrivilegeCache
-from caches.username import UsernameCache
-from scores.achievement import Achievement
-
-from . import connection
-from logger import info
-
-# from helpers.user import safe_name
-
-if TYPE_CHECKING:
-    from beatmaps.constants.statuses import Status
+import logger
+from server.caches.bcrypt import BCryptCache
+from server.caches.clan import ClanCache
+from server.caches.lru_cache import Cache
+from server.caches.priv import PrivilegeCache
+from server.caches.username import UsernameCache
+from server.constants.statuses import Status
+from server.scores.achievement import Achievement
+from server.state import services
 
 # Specialised Caches
 name = UsernameCache()
@@ -27,7 +22,7 @@ beatmaps = Cache(cache_length=120, cache_limit=1000)
 leaderboards = Cache(cache_length=240, cache_limit=100_000)
 
 # Cache for statuses that require an api call to get. md5: status
-no_check_md5s: dict[str, "Status"] = {}
+no_check_md5s: dict[str, Status] = {}
 
 # Stats cache. Key = tuple[CustomModes, Mode, user_id]
 stats_cache = Cache(cache_length=240, cache_limit=300)
@@ -48,16 +43,16 @@ async def initialise_cache() -> bool:
 
     # Doing this way for cool logging.
     await name.full_load()
-    info(f"Successfully cached {len(name)} usernames!")
+    logger.info(f"Successfully cached {len(name)} usernames!")
 
     await priv.full_load()
-    info(f"Successfully cached {len(priv)} privileges!")
+    logger.info(f"Successfully cached {len(priv)} privileges!")
 
     await clan.full_load()
-    info(f"Successfully cached {len(clan)} clans!")
+    logger.info(f"Successfully cached {len(clan)} clans!")
 
     await achievements_load()
-    info(f"Successfully cached {len(achievements)} achievements!")
+    logger.info(f"Successfully cached {len(achievements)} achievements!")
 
     return True
 
@@ -65,7 +60,7 @@ async def initialise_cache() -> bool:
 async def achievements_load() -> bool:
     """Initialises all achievements into the cache."""
 
-    achs = await connection.sql.fetchall("SELECT * FROM ussr_achievements")
+    achs = await services.sql.fetch_all("SELECT * FROM ussr_achievements")
     for ach in achs:
         condition = eval(f"lambda score, mode_vn, stats: {ach[4]}")
         achievements.append(

@@ -1,19 +1,17 @@
-# Replay related handlers.
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from scores.replays.helper import build_full_replay
-from scores.replays.helper import read_replay
-from scores.score import Score
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.responses import Response
-from state.connection import sql
-from user.helper import incr_replays_watched
 
-from logger import error
-from logger import info
+import logger
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.scores.replays.helper import build_full_replay
+from server.scores.replays.helper import read_replay
+from server.scores.score import Score
+from server.state import services
+from server.user.helper import incr_replays_watched
 
-BASE_QUERY = "SELECT play_mode, userid FROM {} WHERE id = %s LIMIT 1"
+BASE_QUERY = "SELECT play_mode, userid FROM {} WHERE id = :id LIMIT 1"
 ERR_NOT_FOUND = "error: no"
 
 
@@ -27,25 +25,28 @@ async def get_replay_web_handler(req: Request) -> Response:
     score_id = int(req.query_params["c"])
     c_mode = CustomModes.from_score_id(score_id)
 
-    score_data_db = await sql.fetchone(BASE_QUERY.format(c_mode.db_table), (score_id,))
+    score_data_db = await services.sql.fetch_one(
+        BASE_QUERY.format(c_mode.db_table),
+        {"id": score_id},
+    )
 
     # Handle replay not found.
     if not score_data_db:
-        error(f"Requested non-existent replay score {score_id}")
+        logger.error(f"Requested non-existent replay score {score_id}")
         return PlainTextResponse(ERR_NOT_FOUND)
 
-    _play_mode, user_id = score_data_db
-    mode = Mode(_play_mode)
+    play_mode, user_id = score_data_db
+    mode = Mode(play_mode)
 
     rp = await read_replay(score_id, c_mode)
     if not rp:
-        error(f"Requested non-existent replay file {score_id}.osr")
+        logger.error(f"Requested non-existent replay file {score_id}.osr")
         return PlainTextResponse(ERR_NOT_FOUND)
 
     # Increment their stats.
     await incr_replays_watched(user_id, mode)
 
-    info(f"Successfully served replay {score_id}.osr")
+    logger.info(f"Successfully served replay {score_id}.osr")
     return Response(rp)
 
 
@@ -55,6 +56,7 @@ async def get_full_replay_handler(req: Request) -> Response:
     score_id = req.path_params["score_id"]
     c_mode = CustomModes.from_score_id(score_id)
     score = await Score.from_db(score_id, c_mode)
+
     if not score:
         return PlainTextResponse("Score not found!", status_code=404)
 
@@ -64,7 +66,7 @@ async def get_full_replay_handler(req: Request) -> Response:
 
     filename = f"{score.username} - {score.bmap.song_name} ({score.id}).osr"
 
-    info(f"Served compiled replay {score_id}!")
+    logger.info(f"Served compiled replay {score_id}!")
 
     return Response(
         bytes(rp.buffer),

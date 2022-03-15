@@ -1,22 +1,21 @@
 # A tester to simulate and estimate the changes to a user caused by a pp
 # calculation change. I wrote this while incredibly bored so the code quality
 # is not the best.
+import asyncio
 import sys
 from dataclasses import dataclass
 
-from cli_utils import get_loop
 from cli_utils import perform_startup_requirements
 from colorama import Fore
 from progressbar import progressbar
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from scores.score import Score
-from state.cache import name
-from state.connection import sql
 from tabulate import tabulate
 
-from logger import error
-from logger import info
+import logger
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.scores.score import Score
+from server.state import cache
+from server.state import services
 
 
 def calc_weighed_pp(scores: tuple[float]) -> tuple[float, float]:
@@ -36,14 +35,14 @@ async def fetch_user_scores(
 ) -> tuple[float, tuple[int, float]]:
     """Fetches the score id and pp for a user's top 100 scores alongside
     calculating the estimated total PP for the user."""
-    scores_db = await sql.fetchall(
+    scores_db = await services.sql.fetch_all(
         (
             "SELECT s.id, s.pp FROM {t} s RIGHT JOIN beatmaps b ON "
             "s.beatmap_md5 = b.beatmap_md5 WHERE s.completed = 3 AND "
-            "s.play_mode = {m_val} AND b.ranked IN (3,2) AND s.userid = %s "
+            "s.play_mode = {m_val} AND b.ranked IN (3,2) AND s.userid = :id "
             "ORDER BY s.pp DESC LIMIT 100"
         ).format(t=c_mode.db_table, m_val=mode.value),
-        (user_id,),
+        {"id": user_id},
     )
 
     t_pp = calc_weighed_pp([s[1] for s in scores_db])
@@ -111,7 +110,7 @@ class PPChangeCalc:
     async def load_old_data(self) -> None:
         """Loads the data for the user and saves it in the object."""
 
-        info("Loading current user info...")
+        logger.info("Loading current user info...")
         self.old_total_pp, self.old_pp_values = await fetch_user_scores(
             self.user_id,
             self.c_mode,
@@ -140,7 +139,7 @@ class PPChangeCalc:
     async def load_score_diff(self) -> None:
         """Loads the score diff results."""
 
-        info("Loading scores and calculating PP for user....")
+        logger.info("Loading scores and calculating PP for user....")
         for score_id, _ in progressbar(self.old_pp_values):
             score = await Score.from_db(score_id, self.c_mode)
             self.score_diff.append(await PPChangeResult.from_score(score))
@@ -161,7 +160,7 @@ class PPChangeCalc:
 
         self = cls(
             user_id=user_id,
-            username=await name.name_from_id(user_id),
+            username=await cache.name.name_from_id(user_id),
             mode=mode,
             c_mode=c_mode,
             # Defaults
@@ -181,7 +180,7 @@ class PPChangeCalc:
 def invalid_args_err(info: str) -> None:
     """Displays an error and closes the program."""
 
-    error(
+    logger.error(
         "Supplied incorrect arguments!\n" + info + "\nConsult the README.md "
         "for documentation of proper usage!",
     )
@@ -212,13 +211,13 @@ def parse_args() -> dict:
     return {"user_id": user_id, "mode": mode, "c_mode": c_mode}
 
 
-def main():
+def main() -> int:
     """Core functionality of the CLI."""
 
-    info("Loading PPTester...")
+    logger.info("Loading PPTester...")
 
     # Make sure server is prepared for operation.
-    loop = get_loop()
+    loop = asyncio.get_event_loop()
     perform_startup_requirements()
 
     # Parse cli data
@@ -226,7 +225,8 @@ def main():
 
     # Perform our recalc and close.
     loop.run_until_complete(PPChangeCalc.perform_full(**data_parsed))
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -4,7 +4,8 @@ import time
 from enum import IntEnum
 from functools import cache
 
-DEBUG = "debug" in sys.argv
+from server import config
+
 __all__ = (
     "info",
     "error",
@@ -70,7 +71,7 @@ def warning(text: str):
 
 
 def debug(text: str):
-    if DEBUG:
+    if config.DEBUG:
         _log(text, "DEBUG", Ansi.WHITE)
 
 

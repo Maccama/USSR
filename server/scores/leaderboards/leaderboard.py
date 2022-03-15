@@ -1,24 +1,23 @@
-# The USSR Leaderboard object.
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 from typing import Optional
 from typing import TYPE_CHECKING
 
-from scores.constants.c_modes import CustomModes
-from scores.constants.complete import Completed
-from scores.constants.modes import Mode
-from scores.constants.statuses import FetchStatus
-from state.cache import add_nocheck_md5
-from state.cache import leaderboards
-from state.connection import sql
-from user.constants.privileges import Privileges
-
-from ...beatmaps.beatmap import Beatmap
-from ..score import Score
-from logger import debug
+import logger
+from server.beatmaps.beatmap import Beatmap
+from server.constants.c_modes import CustomModes
+from server.constants.complete import Completed
+from server.constants.lb_statuses import FetchStatus
+from server.constants.modes import Mode
+from server.constants.privileges import Privileges
+from server.scores.score import Score
+from server.state import cache
+from server.state import services
 
 if TYPE_CHECKING:
-    from scores.score import Score
+    from server.scores.score import Score
 
 BASE_QUERY = """
 SELECT
@@ -95,7 +94,7 @@ async def _try_bmap(md5: str) -> tuple[FetchStatus, Optional[Beatmap]]:
 class PersonalBestResult:
     """A class meant to represent a personal best score on a map."""
 
-    score: Score
+    score: "Score"
     placement: int
 
 
@@ -106,7 +105,7 @@ class GlobalLeaderboard:
 
     mode: Mode
     c_mode: CustomModes
-    _scores: dict[int, Score]
+    _scores: dict[int, "Score"]
     users: list[int]  # ALL USERS, not just ones in `scores`
     total_scores: int
     bmap: Beatmap
@@ -122,7 +121,7 @@ class GlobalLeaderboard:
         return bool(self._scores)
 
     @property
-    def scores(self) -> list[Score]:
+    def scores(self) -> list["Score"]:
         """Returns a list of scores from _scores dict."""
         return self._scores.values()
 
@@ -145,7 +144,7 @@ class GlobalLeaderboard:
 
         return user_id in self.users
 
-    def get_user_score(self, user_id: int) -> Score:
+    def get_user_score(self, user_id: int) -> "Score":
         """Fetches a user's score from the top `SIZE_LIMIT` scores.
 
         Note:
@@ -175,11 +174,11 @@ class GlobalLeaderboard:
 
         where_conds = (
             f"a.privileges & {Privileges.USER_PUBLIC.value}",
-            f"s.beatmap_md5 = %s",
+            f"s.beatmap_md5 = :md5",
             f"s.completed = {Completed.BEST.value}",
             f"s.play_mode = {self.mode.value}",
         )
-        where_args = (self.bmap.md5,)
+        where_args = {"md5": self.bmap.md5}
         return where_conds, where_args
 
     def _construct_query(self, table: str, scoring: str, where_cond: str) -> str:
@@ -219,7 +218,7 @@ class GlobalLeaderboard:
             where_cond=where_cond_str,
         )
 
-        return await sql.fetchall(query, where_args)
+        return await services.sql.fetch_all(query, where_args)
 
     async def __set_data_from_sql(self) -> None:
         """Causes the leaderboard scores to be fetched from the MySQL database,
@@ -259,7 +258,7 @@ class GlobalLeaderboard:
         """Inserts the current leaderboard object into the global leaderboard
         cache."""
 
-        leaderboards.cache(self._create_idx(), self)
+        cache.leaderboards.cache(self._create_idx(), self)
 
     @classmethod
     def from_cache(
@@ -267,7 +266,7 @@ class GlobalLeaderboard:
         bmap_md5: str,
         c_mode: CustomModes,
         mode: Mode,
-    ) -> Optional["GlobalLeaderboard"]:
+    ) -> Optional[GlobalLeaderboard]:
         """Retrieves the leaderboard from the global leaderboard cache.
 
         Args:
@@ -276,7 +275,7 @@ class GlobalLeaderboard:
             mode (Mode): The mode of the leaderboard.
         """
 
-        res = leaderboards.get(_create_glob_lb_idx(bmap_md5, c_mode, mode))
+        res = cache.leaderboards.get(_create_glob_lb_idx(bmap_md5, c_mode, mode))
         if res:
             # Set fetch status to cached.
             res.lb_fetch = res.bmap_fetch = FetchStatus.CACHE
@@ -291,7 +290,7 @@ class GlobalLeaderboard:
         mode: Mode,
         cache: bool = True,
         load: bool = True,
-    ) -> Optional["GlobalLeaderboard"]:
+    ) -> Optional[GlobalLeaderboard]:
         """Retrieves the leaderboard from the database.
 
         Args:
@@ -334,7 +333,7 @@ class GlobalLeaderboard:
         bmap_md5: str,
         c_mode: CustomModes,
         mode: Mode,
-    ) -> Optional["GlobalLeaderboard"]:
+    ) -> Optional[GlobalLeaderboard]:
         """Attempts to retrieve the leaderboard from multiple sources
         in order of performance.
 
@@ -435,7 +434,7 @@ class GlobalLeaderboard:
         if len(self._scores) > SIZE_LIMIT:
             del self._scores[self.users[SIZE_LIMIT]]
 
-        debug(
+        logger.debug(
             f"Inserted score by {s.username} ({s.user_id}) on {s.bmap.song_name} "
             "into the cached leaderboards!",
         )
@@ -470,8 +469,8 @@ class GlobalLeaderboard:
             where_conds, where_args = self.__fetch_where_conds()
 
             # Extend them to limit them to the user.
-            where_conds = (*where_conds, f"s.userid = %s")
-            where_args = (*where_args, user_id)
+            where_conds = (*where_conds, f"s.userid = :id")
+            where_args |= {"id": user_id}
             where_cond_str = " AND ".join(where_conds)
             scoring = "pp" if self.c_mode.uses_ppboard else "score"
             table = self.c_mode.db_table
@@ -487,7 +486,7 @@ class GlobalLeaderboard:
                 + "LIMIT 1"
             )
 
-            score = await sql.fetchone(query, where_args)
+            score = await services.sql.fetch_one(query, where_args)
 
         pb = PersonalBestResult(score, self.get_user_placement(user_id))
         if cache:
@@ -530,7 +529,7 @@ class CountryLeaderboard(GlobalLeaderboard):
         mode: Mode,
         user_id: int,
         load: bool = True,
-    ) -> Optional["GlobalLeaderboard"]:
+    ) -> Optional[GlobalLeaderboard]:
         """Creates an instance of `GlobalLeaderboard` using data from MySQL.
 
         Args:
@@ -585,22 +584,22 @@ class CountryLeaderboard(GlobalLeaderboard):
             extra_joins="INNER JOIN users_stats st ON st.id = a.id",
         )
 
-    def _fetch_where_conds(self) -> tuple[tuple[str], tuple[object]]:
+    def _fetch_where_conds(self) -> tuple[tuple[str], dict[str, Any]]:
         """Returns the where conditions to be used within MySQL queries
         related to the leaderboard, alongside args meant to be safely formatted
         into the query."""
 
         where_conds = (
             f"a.privileges & {Privileges.USER_PUBLIC.value}",
-            "s.beatmap_md5 = %s",
+            "s.beatmap_md5 = :md5",
             f"s.completed = {Completed.BEST.value}",
             f"s.play_mode = {self.mode.value}",
-            "st.country = (SELECT country FROM users_stats WHERE id = %s)",
+            "st.country = (SELECT country FROM users_stats WHERE id = :id)",
         )
-        where_args = (
-            self.bmap.md5,
-            self.user_id,
-        )
+        where_args = {
+            "md5": self.bmap.md5,
+            "id": self.user_id,
+        }
         return where_conds, where_args
 
 
@@ -627,26 +626,25 @@ class FriendLeaderboard(CountryLeaderboard):
             extra_joins="",
         )
 
-    def _fetch_where_conds(self) -> tuple[tuple[str], tuple[object]]:
+    def _fetch_where_conds(self) -> tuple[tuple[str], dict[str, Any]]:
         """Returns the where conditions to be used within MySQL queries
         related to the leaderboard, alongside args meant to be safely formatted
         into the query."""
 
         where_conds = (
             f"a.privileges & {Privileges.USER_PUBLIC.value}",
-            "s.beatmap_md5 = %s",
+            "s.beatmap_md5 = :md5",
             f"s.completed = {Completed.BEST.value}",
             f"s.play_mode = {self.mode.value}",
             (
-                "(a.id IN (SELECT user2 FROM users_relationships WHERE user1 = %s)"
-                "OR a.id = %s)"
+                "(a.id IN (SELECT user2 FROM users_relationships WHERE user1 = :id)"
+                "OR a.id = :id)"
             ),
         )
-        where_args = (
-            self.bmap.md5,
-            self.user_id,
-            self.user_id,
-        )
+        where_args = {
+            "md5": self.bmap.md5,
+            "id": self.user_id,
+        }
         return where_conds, where_args
 
 
@@ -664,7 +662,7 @@ class ModLeaderboard(GlobalLeaderboard):
         mode: Mode,
         mods: int,
         load: bool = True,
-    ) -> Optional["GlobalLeaderboard"]:
+    ) -> Optional[GlobalLeaderboard]:
         """Creates an instance of `GlobalLeaderboard` using data from MySQL.
 
         Args:
@@ -699,17 +697,17 @@ class ModLeaderboard(GlobalLeaderboard):
             await res.refresh()
         return res
 
-    def _fetch_where_conds(self) -> tuple[tuple[str], tuple[object]]:
+    def _fetch_where_conds(self) -> tuple[tuple[str], dict[str, Any]]:
         """Returns the where conditions to be used within MySQL queries
         related to the leaderboard, alongside args meant to be safely formatted
         into the query."""
 
         where_conds = (
             f"a.privileges & {Privileges.USER_PUBLIC.value}",
-            "s.beatmap_md5 = %s",
+            "s.beatmap_md5 = :md5",
             f"s.completed = {Completed.BEST.value}",
             f"s.play_mode = {self.mode.value}",
-            "s.mods = %s",
+            "s.mods = :mods",
         )
-        where_args = (self.bmap.md5, self.mods)
+        where_args = {"md5": self.bmap.md5, "mods": self.mods}
         return where_conds, where_args

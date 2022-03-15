@@ -1,10 +1,9 @@
 # USSR New Redis impl.
-from globals.caches import beatmaps
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from scores.leaderboards.leaderboard import GlobalLeaderboard
-
-from logger import info
+import logger
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.scores.leaderboards.leaderboard import GlobalLeaderboard
+from server.state import cache
 
 
 async def drop_bmap_cache_pubsub(data: bytes) -> None:
@@ -14,7 +13,7 @@ async def drop_bmap_cache_pubsub(data: bytes) -> None:
     NOTE: This does not affect already cached leaderboards.
     """
 
-    beatmaps.drop(data.decode())
+    cache.beatmaps.drop(data.decode())
 
 
 async def refresh_leaderboard_pubsub(data: bytes) -> None:
@@ -35,14 +34,14 @@ async def refresh_leaderboard_pubsub(data: bytes) -> None:
 
     # Attempts to drop beatmap regardless of its presence to stop old cached
     # being used.
-    beatmaps.drop(md5)
+    cache.beatmaps.drop(md5)
 
     # Try to fetch existing leaderboard. If exists, refresh it.
     if lb := GlobalLeaderboard.from_cache(md5, c_mode, mode):
         await lb.refresh_beatmap()
         await lb.refresh()
 
-    info(f"Redis Pubsub: Refreshed leaderboards and beatmap for {md5}!")
+    logger.info(f"Redis Pubsub: Refreshed leaderboards and beatmap for {md5}!")
 
 
 # TODO: Add verify handler.

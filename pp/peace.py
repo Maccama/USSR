@@ -1,12 +1,13 @@
 # Simple wrapper around the peace PP calc
 from typing import TYPE_CHECKING
 
-from beatmaps.helper import fetch_osu_file
 from peace_performance_python.objects import Beatmap
 from peace_performance_python.objects import Calculator
 
+from server.beatmaps.helper import fetch_osu_file
+
 if TYPE_CHECKING:
-    from scores.score import Score
+    from server.scores.score import Score
 
 
 class CalculatorPeace:

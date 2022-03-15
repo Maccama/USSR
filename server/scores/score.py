@@ -3,27 +3,24 @@ import traceback
 from dataclasses import dataclass
 from typing import Optional
 
-from beatmaps.beatmap import Beatmap
-from db.redis.handlers.pep import announce
-from libs.crypt import validate_md5
-from libs.time import get_timestamp
 from py3rijndael import RijndaelCbc
 from py3rijndael import ZeroPadding
-from scores.constants.c_modes import CustomModes
-from scores.constants.complete import Completed
-from scores.constants.modes import Mode
-from scores.constants.mods import Mods
-from state import caches
-from state.connection import sql
-from user.constants.privileges import Privileges
-from user.helper import safe_name
 
-from .leaderboards.leaderboard import GlobalLeaderboard
-from config import config
-from logger import debug
-from logger import error
-from logger import warning
+import logger
 from pp.main import select_calculator
+from server import config
+from server.beatmaps.beatmap import Beatmap
+from server.constants.c_modes import CustomModes
+from server.constants.complete import Completed
+from server.constants.modes import Mode
+from server.constants.mods import Mods
+from server.constants.privileges import Privileges
+from server.db.redis.handlers.pep import announce
+from server.libs.crypt import validate_md5
+from server.libs.time import get_timestamp
+from server.state import cache
+from server.state import services
+from server.user.helper import safe_name
 
 # PP Calculators
 
@@ -104,6 +101,7 @@ class Score:
             padding=ZeroPadding(32),
             block_size=32,
         )
+
         score_data = (
             aes.decrypt(
                 base64.b64decode(post_args.getlist("score")[0]).decode("latin_1"),
@@ -117,18 +115,18 @@ class Score:
 
         # Verify map.
         if not validate_md5(map_md5):
-            warning(
+            logger.warning(
                 f"Score submit provided invalid beatmap md5 ({map_md5})! " "Giving up.",
             )
             return
 
         # Verify score data sent is correct.
         if len(score_data) != 18:  # Not sure if we restrict for this
-            warning(f"Someone sent over incorrect score data.... Giving up.")
+            logger.warning(f"Someone sent over incorrect score data.... Giving up.")
             return
 
         username = score_data[1].rstrip()
-        user_id = await caches.name.id_from_safe(safe_name(username))
+        user_id = await cache.name.id_from_safe(safe_name(username))
         bmap = await Beatmap.from_md5(map_md5)
         mods = Mods(int(score_data[13]))
         mode = Mode(int(score_data[15]))
@@ -177,7 +175,7 @@ class Score:
                 save.
         """
 
-        debug("Calculating completed.")
+        logger.debug("Calculating completed.")
 
         # Get the simple ones out the way.
         if self.placement == 1:
@@ -199,19 +197,19 @@ class Score:
         scoring = "pp"
         val = self.pp
 
-        debug("Using MySQL to calculate Completed.")
+        logger.debug("Using MySQL to calculate Completed.")
 
         query = (
-            f"userid = %s AND completed = {Completed.BEST.value} AND beatmap_md5 = %s "
+            f"userid = :id AND completed = {Completed.BEST.value} AND beatmap_md5 = :md5 "
             f"AND play_mode = {self.mode.value}"
         )
-        args = (
-            self.user_id,
-            self.bmap.md5,
-        )
+        args = {
+            "id": self.user_id,
+            "md5": self.bmap.md5,
+        }
 
         # TODO: Set old best to mod best etc
-        await sql.execute(
+        await services.sql.execute(
             f"UPDATE {table} SET completed = {Completed.COMPLETE.value} WHERE "
             + query
             + f" AND {scoring} < {val} LIMIT 1",
@@ -219,7 +217,7 @@ class Score:
         )
 
         # Check if it remains.
-        ex_db = await sql.fetchcol(
+        ex_db = await services.sql.fetch_val(
             f"SELECT 1 FROM {table} WHERE " + query + " LIMIT 1",
             args,
         )
@@ -242,23 +240,23 @@ class Score:
         """
 
         if (not self.passed) or (not self.bmap.has_leaderboard):
-            debug("Not bothering calculating placement.")
+            logger.debug("Not bothering calculating placement.")
             self.placement = 0
             return 0
 
-        debug("Calculating score placement based on MySQL.")
+        logger.debug("Calculating score placement based on MySQL.")
 
         table = self.c_mode.db_table
         scoring = "pp" if self.c_mode.uses_ppboard else "score"
         val = self.pp if self.c_mode.uses_ppboard else self.score
 
         self.placement = (
-            await sql.fetchcol(
+            await services.sql.fetch_val(
                 f"SELECT COUNT(*) FROM {table} s INNER JOIN users u ON s.userid = "
                 f"u.id WHERE u.privileges & {Privileges.USER_PUBLIC.value} AND "
                 f"s.play_mode = {self.mode.value} AND s.completed = {Completed.BEST.value} "
-                f"AND {scoring} > %s AND s.beatmap_md5 = %s",
-                (val, self.bmap.md5),
+                f"AND {scoring} > :score_val AND s.beatmap_md5 = :md5",
+                {"score_val": val, "md5": self.bmap.md5},
             )
         ) + 1
 
@@ -268,17 +266,17 @@ class Score:
         """Calculates the PP given for the score."""
 
         if not self.bmap.has_leaderboard:  # or (not self.passed):
-            debug("Not bothering to calculate PP.")
+            logger.debug("Not bothering to calculate PP.")
             self.pp = 0.0
             return self.pp
-        debug("Calculating PP...")  # We calc for failed scores!
+        logger.debug("Calculating PP...")  # We calc for failed scores!
 
         # TODO: More calculators (custom for standard.)
         calc = select_calculator(self.mode, self.c_mode).from_score(self)
         try:
             self.pp, self.sr = await calc.calculate()
         except Exception:
-            error(
+            logger.error(
                 "Could not calculate PP for score! Setting to 0. Error: "
                 + traceback.format_exc(),
             )
@@ -341,40 +339,41 @@ class Score:
         # Why did I design this system when i was stupid...
 
         # Delete previous first place.
-        await sql.execute(
-            "DELETE FROM first_places WHERE beatmap_md5 = %s AND mode = %s AND "
-            "relax = %s LIMIT 1",
-            (self.bmap.md5, self.mode.value, self.c_mode.value),
+        await services.sql.execute(
+            "DELETE FROM first_places WHERE beatmap_md5 = :md5 AND mode = :mode AND "
+            "relax = :relax LIMIT 1",
+            {"md5": self.bmap.md5, "mode": self.mode.value, "relax": self.c_mode.value},
         )
 
         # And now we insert the new one.
-        await sql.execute(
+        await services.sql.execute(
             "INSERT INTO first_places (score_id, user_id, score, max_combo, full_combo,"
             "mods, 300_count, 100_count, 50_count, miss_count, timestamp, mode, completed,"
             "accuracy, pp, play_time, beatmap_md5, relax) VALUES "
-            "(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (
-                self.id,
-                self.user_id,
-                self.score,
-                self.max_combo,
-                self.full_combo,
-                self.mods.value,
-                self.count_300,
-                self.count_100,
-                self.count_50,
-                self.count_miss,
-                self.timestamp,
-                self.mode.value,
-                self.completed.value,
-                self.accuracy,
-                self.pp,
-                self.play_time,
-                self.bmap.md5,
-                self.c_mode.value,
-            ),
+            "(:id, :uid, :score, :max_combo, :fc, :mods, :c300, :c100, :c50, :cmiss, :time, :mode,"
+            ":completed, :acc, :pp, :play_time, :md5, :relax)",
+            {
+                "id": self.id,
+                "uid": self.user_id,
+                "score": self.score,
+                "max_combo": self.max_combo,
+                "fc": self.full_combo,
+                "mods": self.mods.value,
+                "c300": self.count_300,
+                "c100": self.count_100,
+                "c50": self.count_50,
+                "cmiss": self.count_miss,
+                "time": self.timestamp,
+                "mode": self.mode.value,
+                "completed": self.completed.value,
+                "acc": self.accuracy,
+                "pp": self.pp,
+                "play_time": self.play_time,
+                "md5": self.bmap.md5,
+                "relax": self.c_mode.value,
+            },
         )
-        debug("First place added.")
+        logger.debug("First place added.")
 
         # TODO: Move somewhere else.
         msg = (
@@ -386,20 +385,6 @@ class Score:
         # Announce it.
         await announce(msg)
         # await log_first_place(self, old_stats, new_stats)
-
-    def insert_into_lb_cache(self) -> None:
-        """Inserts the score into cached leaderboards if the leaderboards are
-        already cached.
-
-        Note:
-            Only run if completed is equal to `Completed.BEST`. Else, it will
-            lead to a weird state of the leaderboards, with wrong scores
-            appearing.
-        """
-
-        lb = GlobalLeaderboard.from_cache(self.bmap.md5, self.c_mode, self.mode)
-        if lb is not None:
-            lb.insert_user_score(self)
 
     async def submit(
         self,
@@ -457,32 +442,32 @@ class Score:
         table = self.c_mode.db_table
         ts = get_timestamp()
 
-        debug("Inserting score into the MySQL database.")
+        logger.debug("Inserting score into the MySQL database.")
 
-        self.id = await sql.execute(
+        self.id = await services.sql.execute(
             f"INSERT INTO {table} (beatmap_md5, userid, score, max_combo, full_combo, mods, "
             "300_count, 100_count, 50_count, katus_count, gekis_count, misses_count, time, "
-            "play_mode, completed, accuracy, pp) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,"
-            "%s,%s,%s,%s,%s)",
-            (
-                self.bmap.md5,
-                self.user_id,
-                self.score,
-                self.max_combo,
-                int(self.full_combo),
-                self.mods.value,
-                self.count_300,
-                self.count_100,
-                self.count_50,
-                self.count_katu,
-                self.count_geki,
-                self.count_miss,
-                ts,
-                self.mode.value,
-                self.completed.value,
-                self.accuracy,
-                self.pp,
-            ),
+            "play_mode, completed, accuracy, pp) VALUES (:md5, :uid, :score, :combo, :fc, :mods, :c300, :c100, "
+            ":c50, :ckatus, :cgekis, :cmiss, :time, :mode, :completed, :accuracy, :pp)",
+            {
+                "md5": self.bmap.md5,
+                "uid": self.user_id,
+                "score": self.score,
+                "combo": self.max_combo,
+                "fc": int(self.full_combo),
+                "mods": self.mods.value,
+                "c300": self.count_300,
+                "c100": self.count_100,
+                "c50": self.count_50,
+                "ckatus": self.count_katu,
+                "cgekis": self.count_geki,
+                "cmiss": self.count_miss,
+                "time": ts,
+                "mode": self.mode.value,
+                "completed": self.completed.value,
+                "accuracy": self.accuracy,
+                "pp": self.pp,
+            },
         )
 
     async def save_pp(self) -> None:
@@ -492,9 +477,9 @@ class Score:
             This does NOT raise an exception if score is not submitted.
         """
 
-        await sql.execute(
-            f"UPDATE {self.c_mode.db_table} SET pp = %s WHERE id = %s LIMIT 1",
-            (self.pp, self.id),
+        await services.sql.execute(
+            f"UPDATE {self.c_mode.db_table} SET pp = :pp WHERE id = :id LIMIT 1",
+            {"pp": self.pp, "id": self.id},
         )
 
     @classmethod
@@ -611,13 +596,13 @@ class Score:
         """
 
         table = c_mode.db_table
-        s_db = await sql.fetchone(
+        s_db = await services.sql.fetch_one(
             FETCH_SCORE.format(
                 table=table,
-                cond="s.id = %s",
+                cond="s.id = :score_id",
                 limit="1",
             ),
-            (score_id,),
+            {"score_id": score_id},
         )
 
         if not s_db:

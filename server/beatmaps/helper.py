@@ -1,19 +1,12 @@
-# Helpers for general beatmap functions.
-import os
 from typing import Optional
 
 from aiopath import AsyncPath as Path
-from state.connection import sql
-from web.client.client import simple_get
 
-from config import config
-from logger import debug
-from logger import error
+import logger
+from server import config
+from server.state import services
 
-if config.DATA_DIR[0] == "/" or config.DATA_DIR[1] == ":":
-    DIR_MAPS = Path(config.DATA_DIR) / "maps"
-else:
-    DIR_MAPS = os.getcwd() / Path(config.DATA_DIR) / "maps"
+DIR_MAPS = Path(config.SERVER_DATA_DIR) / "maps"
 
 
 async def bmap_md5_from_id(bmap_id: int) -> Optional[str]:
@@ -32,9 +25,9 @@ async def bmap_md5_from_id(bmap_id: int) -> Optional[str]:
         Else `None`.
     """
 
-    return await sql.fetchcol(
-        "SELECT beatmap_md5 FROM beatmaps WHERE beatmap_id = %s LIMIT 1",
-        (bmap_id,),
+    return await services.sql.fetch_val(
+        "SELECT beatmap_md5 FROM beatmaps WHERE beatmap_id = :bid LIMIT 1",
+        {"bid": bmap_id},
     )
 
 
@@ -53,13 +46,13 @@ async def bmap_get_set_md5s(set_id: int) -> tuple[str]:
         `tuple` of MD5 hashes.
     """
 
-    return await sql.fetchall(
-        "SELECT beatmap_md5 FROM beatmaps WHERE beatmapset_id = %s",
-        (set_id,),
+    return await services.sql.fetch_all(
+        "SELECT beatmap_md5 FROM beatmaps WHERE beatmapset_id = :bsetid",
+        {"bsetid": set_id},
     )
 
 
-OSU_DL_DIR = "http://old.ppy.sh/osu/{id}"
+OSU_DL_DIR = "http://old.ppy.sh/osu/"
 
 
 async def fetch_osu_file(bmap_id: int) -> str:
@@ -71,17 +64,19 @@ async def fetch_osu_file(bmap_id: int) -> str:
 
     path = DIR_MAPS / f"{bmap_id}.osu"
     if await path.exists():
-        debug(f"osu beatmap file for beatmap {bmap_id} is already cached!")
+        logger.debug(f"osu beatmap file for beatmap {bmap_id} is already cached!")
         return path
 
-    debug(f"Downloading `.osu` file for beatmap {bmap_id} to {path} ...")
-    m_str = await simple_get(OSU_DL_DIR.format(id=bmap_id))
+    logger.debug(f"Downloading `.osu` file for beatmap {bmap_id} to {path} ...")
+    async with services.web.get(OSU_DL_DIR + str(bmap_id)) as resp:
+        m_str = await resp.read()
+
     if not m_str:
-        return error(f"Invalid beatmap .osu response! PP calculation will fail!")
+        return logger.error(f"Invalid beatmap .osu response! PP calculation will fail!")
 
     # Write to file.
     await path.write_text(m_str)
-    debug(f"Beatmap cached to {path}!")
+    logger.debug(f"Beatmap cached to {path}!")
     return path
 
 
@@ -108,9 +103,9 @@ async def user_rated_bmap(user_id: int, bmap_md5: str) -> bool:
         `False` otherwise.
     """
 
-    exists_db = await sql.fetchcol(
-        "SELECT 1 FROM beatmaps_rating WHERE user_id = %s AND beatmap_md5 = %s",
-        (user_id, bmap_md5),
+    exists_db = await services.sql.fetch_val(
+        "SELECT 1 FROM beatmaps_rating WHERE user_id = :id AND beatmap_md5 = :md5",
+        {"id": user_id, "md5": bmap_md5},
     )
 
     return bool(exists_db)
@@ -132,20 +127,20 @@ async def add_bmap_rating(user_id: int, bmap_md5: str, rating: int) -> float:
         The new average rating as float.
     """
 
-    await sql.execute(
-        "INSERT INTO beatmaps_rating (user_id, rating, beatmap_md5) VALUES (%s, %s, %s)",
-        (user_id, rating, bmap_md5),
+    await services.sql.execute(
+        "INSERT INTO beatmaps_rating (user_id, rating, beatmap_md5) VALUES (:id, :rating, :md5)",
+        {"id": user_id, "rating": rating, "md5": bmap_md5},
     )
 
-    new_rating = await sql.fetchcol(
-        "SELECT AVG(rating) FROM beatmaps_rating WHERE user_id = %s AND beatmap_md5 = %s",
-        (user_id, bmap_md5),
+    new_rating = await services.sql.fetch_val(
+        "SELECT AVG(rating) FROM beatmaps_rating WHERE user_id = :user_id AND beatmap_md5 = :md5",
+        {"user_id": user_id, "md5": bmap_md5},
     )
 
     # Set new value in the beatmaps table.
-    await sql.execute(
-        "UPDATE beatmaps SET rating = %s WHERE beatmap_md5 = %s LIMIT 1",
-        (new_rating, bmap_md5),
+    await services.sql.execute(
+        "UPDATE beatmaps SET rating = :rating WHERE beatmap_md5 = :md5 LIMIT 1",
+        {"rating": new_rating, "md5": bmap_md5},
     )
 
     return new_rating

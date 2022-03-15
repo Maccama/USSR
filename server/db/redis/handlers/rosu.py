@@ -1,7 +1,7 @@
 # These are the pubsub events from the RealistikOsu stack. It is recommended
 # to implement these into yours as they do control pretty core functionality.
 # This is just to ensure compatibility with the popular variants.
-from globals.caches import clan
+from server.state import cache
 
 
 async def clan_update_pubsub(msg: bytes) -> None:
@@ -10,4 +10,4 @@ async def clan_update_pubsub(msg: bytes) -> None:
     Refreshes the state of a user's clan in the cache.
     """
 
-    await clan.cache_individual(int(msg.decode()))
+    await cache.clan.cache_individual(int(msg.decode()))

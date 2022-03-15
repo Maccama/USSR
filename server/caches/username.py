@@ -3,7 +3,7 @@
 from typing import Dict
 from typing import Optional
 
-from state.connection import sql
+from server.state import services
 
 BASE_QUERY = "SELECT id, username, username_safe FROM users "
 
@@ -19,7 +19,7 @@ class UsernameCache:
     async def full_load(self) -> None:
         """Loads all username - id combos to memory for access."""
 
-        names_db = await sql.fetchall(BASE_QUERY)
+        names_db = await services.sql.fetch_all(BASE_QUERY)
         self.id_name_cache = {user_id: name for user_id, name, _ in names_db}
         self.safe_id_cache = {safe_name: user_id for user_id, _, safe_name in names_db}
 
@@ -60,7 +60,10 @@ class UsernameCache:
         I am really tired writing this but you get the point.
         """
 
-        user_db = await sql.fetchone(BASE_QUERY + "WHERE id = %s", (user_id,))
+        user_db = await services.sql.fetch_one(
+            BASE_QUERY + "WHERE id = :id",
+            {"id": user_id},
+        )
         if not user_db:
             return
 
@@ -72,9 +75,9 @@ class UsernameCache:
     async def load_from_safe(self, safe_name: str) -> None:
         """Someone please write this."""
 
-        user_db = await sql.fetchone(
-            BASE_QUERY + "WHERE username_safe = %s LIMIT 1",
-            (safe_name,),
+        user_db = await services.sql.fetch_one(
+            BASE_QUERY + "WHERE username_safe = :safe_name LIMIT 1",
+            {"safe_name": safe_name},
         )
         if not user_db:
             return

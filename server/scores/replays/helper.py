@@ -1,20 +1,16 @@
-import os
 from typing import Optional
 
 from aiopath import AsyncPath as Path
-from libs.bin import BinaryWriter
-from libs.crypt import hash_md5
-from libs.crypt import ts_to_utc_ticks
-from scores.constants.c_modes import CustomModes
-from scores.score import Score
 
-from config import config
-from logger import debug
+import logger
+from server import config
+from server.constants.c_modes import CustomModes
+from server.libs.bin import BinaryWriter
+from server.libs.crypt import hash_md5
+from server.libs.crypt import ts_to_utc_ticks
+from server.scores.score import Score
 
-if config.DATA_DIR[0] == "/" or config.DATA_DIR[1] == ":":
-    DATA_DIR = Path(config.DATA_DIR)
-else:
-    DATA_DIR = os.getcwd() / Path(config.DATA_DIR)
+DATA_DIR = Path(config.SERVER_DATA_DIR)
 
 
 def get_replay_path(score_id: int, c_mode: CustomModes) -> Path:
@@ -61,7 +57,7 @@ async def build_full_replay(s: Score) -> Optional[BinaryWriter]:
     path = get_replay_path(s.id, s.c_mode)
 
     if not await path.exists():
-        debug(f"Replay {s.id}.osr does not exist.")
+        logger.debug(f"Replay {s.id}.osr does not exist.")
         return
 
     rp = await path.read_bytes()

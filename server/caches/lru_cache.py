@@ -5,7 +5,7 @@ from typing import Optional
 from typing import TypedDict
 from typing import Union
 
-from libs.time import get_timestamp
+from server.libs.time import get_timestamp
 
 CACHE_KEY = Union[int, str, tuple]
 

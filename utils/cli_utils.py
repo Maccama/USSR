@@ -11,23 +11,11 @@ os.chdir("../")
 from main import ensure_dependencies, perform_startup
 import asyncio
 
-loop = None
-
-
-def get_loop() -> asyncio.AbstractEventLoop:
-    """Creates an async event loop with uvloop if available."""
-
-    # UVloop is handled by main import.
-    global loop
-    loop = asyncio.get_event_loop()
-    return loop
-
 
 def perform_startup_requirements():
     """Performs the standard startup requirements, including async ones."""
+    loop = asyncio.get_event_loop()
 
-    if not loop:
-        get_loop()
     ensure_dependencies()
     loop.run_until_complete(perform_startup(False))
 
@@ -49,6 +37,7 @@ async def perform_split_async(coro: Callable, l: list, tasks: int):
 
     for args in lsts:
         tasks.append(loop.create_task(coro(args)))
+
     # Now wait for all tasks to finish.
     for task in tasks:
         await task

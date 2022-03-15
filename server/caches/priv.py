@@ -2,8 +2,8 @@
 from typing import Dict
 from typing import Optional
 
-from state.connection import sql
-from user.constants.privileges import Privileges
+from server.constants.privileges import Privileges
+from server.state import services
 
 
 class PrivilegeCache:
@@ -19,7 +19,7 @@ class PrivilegeCache:
             This is an INTENSIVE OPERATION. Use rarely.
         """
 
-        ranks_db = await sql.fetchall("SELECT id, privileges FROM users")
+        ranks_db = await services.sql.fetch_all("SELECT id, privileges FROM users")
 
         self.privileges = {user_id: Privileges(priv) for user_id, priv in ranks_db}
 
@@ -49,9 +49,9 @@ class PrivilegeCache:
             user_id (int): The database ID for the user to cache.
         """
 
-        priv_db = await sql.fetchcol(
-            "SELECT privileges FROM users WHERE id = %s",
-            (user_id,),
+        priv_db = await services.sql.fetch_val(
+            "SELECT privileges FROM users WHERE id = :id",
+            {"id": user_id},
         )
         if priv_db is None:
             return

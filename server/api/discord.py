@@ -1,20 +1,19 @@
-# A cool discord helper (specifically with webhooks)
+from __future__ import annotations
+
 import asyncio
 import traceback
 from typing import Optional
 from typing import TYPE_CHECKING
 
-from anticheat.constants.actions import Actions
-from web.client.client import simple_post_json
+import logger
+from server import config
+from server.constants.actions import Actions
+from server.state import services
 
-from config import config
-from logger import debug
-from logger import error
-from logger import info
-
+# Fix circular imports issue.
 if TYPE_CHECKING:
-    from user.stats import Stats
-    from scores.score import Score
+    from server.user.stats import Stats
+    from server.scores.score import Score
 
 # This portion is based off cmyui's discord hooks code
 # https://github.com/cmyui/cmyui_pkg/blob/master/cmyui/discord/webhook.py
@@ -130,11 +129,11 @@ class Webhook:
     def json(self):
         if not any([self.content, self.file, self.embeds]):
             raise Exception(
-                "Webhook must contain atleast one " "of (content, file, embeds).",
+                "Webhook must contain atleast one of (content, file, embeds).",
             )
 
         if self.content and len(self.content) > 2000:
-            raise Exception("Webhook content must be under " "2000 characters.")
+            raise Exception("Webhook content must be under 2000 characters.")
 
         payload = {"embeds": []}
 
@@ -164,26 +163,33 @@ class Webhook:
 
     async def post(self) -> None:
         """Post the webhook in JSON format."""
+        async with services.web.post(
+            self.url,
+            json=self.json,
+            headers={"Content-Type": "application/json"},
+        ) as res:
+            res = await res.json()
 
-        res = await simple_post_json(self.url, self.json, False)
-        debug(f"Webhook response: {res}")
+        logger.debug(f"Webhook response: {res}")
 
 
 # Hooks
-admin_hook = a_hook if (a_hook := config.DISCORD_ADMIN_HOOK) else None
-first_hook = one_hook if (one_hook := config.DISCORD_FIRST_PLACE) else None
+admin_hook = config.DISCORD_ADMIN_HOOK_WEBHOOK or None
+first_hook = config.DISCORD_FIRST_PLACE_WEBHOOK or None
 
 
 async def wrap_hook(hook: str, embed: Embed) -> None:
     """Handles sending the webhook to discord."""
 
-    info("Sending Discord webhook!")
+    logger.info("Sending Discord webhook!")
     try:
         wh = Webhook(hook, tts=False, username="USSR Score Server")
         wh.add_embed(embed)
         await wh.post()
     except Exception:
-        error("Failed sending Discord webhook with exception " + traceback.format_exc())
+        logger.error(
+            "Failed sending Discord webhook with exception " + traceback.format_exc(),
+        )
 
 
 async def schedule_hook(hook: str, embed: Embed):
@@ -191,9 +197,10 @@ async def schedule_hook(hook: str, embed: Embed):
 
     if not hook:
         return
+
     loop = asyncio.get_event_loop()
     loop.create_task(wrap_hook(hook, embed))
-    debug("Scheduled the performing of a discord webhook!")
+    logger.debug("Scheduled the performing of a discord webhook!")
 
 
 EDIT_COL = "4360181"

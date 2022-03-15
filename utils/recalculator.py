@@ -1,17 +1,15 @@
 # The USSR Recalculator Utils. This one will be quite slow ngl......
 # But it can reuse code and utils efficiently. You win some you lose some.
+import asyncio
 import traceback
-from asyncio import Lock
 from typing import Generator
 
-from cli_utils import get_loop
 from cli_utils import perform_startup_requirements
-from scores.constants.c_modes import CustomModes
-from scores.score import Score
-from state.connection import sql
 
-from logger import error
-from logger import info
+import logger
+from server.constants.c_modes import CustomModes
+from server.scores.score import Score
+from server.state import services
 
 TASK_COUNT = 4
 BASE_QUERY = "SELECT id FROM {table} WHERE {cond}"
@@ -31,7 +29,7 @@ class ScorePool:
         """Creates an empty instance of"""
         self.scores: list = []
         self.score_ids: list[int] = []
-        self.lock = Lock()
+        self.lock = asyncio.Lock()
         self.c_mode = c_mode
 
     async def fetch_scores(self, cond: str, args: tuple = ()) -> None:
@@ -39,18 +37,18 @@ class ScorePool:
 
         self.scores = [
             s[0]
-            for s in await sql.fetchall(
+            for s in await services.sql.fetch_all(
                 BASE_QUERY.format(table=self.c_mode.db_table, cond=cond),
             )
         ]
 
-        info(f"ScorePool fetched a total of {len(self.scores)} scores!")
+        logger.info(f"ScorePool fetched a total of {len(self.scores)} scores!")
 
     async def fetch_loved_scores(self) -> None:
         """Adds all completed scores on loved beatmaps."""
 
         table = self.c_mode.db_table
-        scores_db = await sql.fetchall(
+        scores_db = await services.sql.fetch_all(
             f"SELECT s.id FROM {table} s INNER JOIN beatmaps b ON b.beatmap_md5 = s.beatmap_md5 "
             "WHERE s.completed >= 2 AND b.ranked = 5",
         )
@@ -58,7 +56,7 @@ class ScorePool:
         for score in scores_db:
             self.score_ids.append(score[0])
 
-        info(f"ScorePool fetched a total of {len(scores_db)} scores!")
+        logger.info(f"ScorePool fetched a total of {len(scores_db)} scores!")
 
     async def get_scores(self) -> Generator[Score, None, None]:
         """Generates score objects from score IDs in the object."""
@@ -82,38 +80,39 @@ class ScorePool:
                 await recalc_pp(score)
                 new_score_pp = score.pp
 
-                info(
+                logger.info(
                     f"Score on {score.bmap.song_name} by {score.username} {old_score_pp:.2f}pp -> {new_score_pp:.2f}pp",
                 )
 
                 if count % 10 == 0:
-                    info(f"Calculated {count}/{total} scores ({failed} failed).")
+                    logger.info(f"Calculated {count}/{total} scores ({failed} failed).")
             except Exception:
                 failed += 1
                 err = traceback.format_exc()
-                error(
+                logger.error(
                     f"Failed recalculating score {score.id} with err {err}.\n"
                     f"Total failed: {failed}",
                 )
 
 
-def main():
-    info("Starting USSR PP Recalculator...")
-    loop = get_loop()
+def main() -> int:
+    logger.info("Starting USSR PP Recalculator...")
+    loop = asyncio.get_event_loop()
     perform_startup_requirements()
     loop.run_until_complete(async_main())
+    return 0
 
 
 async def async_main():
     # Hardcoding loved PP recalc lmfao.
     calc = ScorePool(CustomModes.RELAX)
 
-    info("Loading scores...")
+    logger.info("Loading scores...")
     await calc.fetch_loved_scores()
 
-    info("Starting recalculation!")
+    logger.info("Starting recalculation!")
     await calc.perform_sequential()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

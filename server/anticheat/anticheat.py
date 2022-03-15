@@ -1,11 +1,11 @@
 # Anticheat related helper functions.
-from anticheat.constants.lastfm import LastFMFlags
-from libs.time import get_timestamp
-from scores.constants.c_modes import CustomModes
-from scores.score import Score
-from state.connection import sql
-
-from config import config
+from server import config
+from server.constants.c_modes import CustomModes
+from server.constants.lastfm import LastFMFlags
+from server.constants.modes import Mode
+from server.libs.time import get_timestamp
+from server.scores.score import Score
+from server.state import services
 
 _caps = {
     CustomModes.VANILLA: config.PP_CAP_VN,
@@ -14,21 +14,21 @@ _caps = {
 }
 
 
-def get_pp_cap(mode: CustomModes) -> int:
-    return _caps[mode]
+def get_pp_cap(c_mode: CustomModes, mode: Mode) -> int:
+    return _caps[c_mode][mode.value]
 
 
 async def surpassed_cap_restrict(score: Score) -> bool:
     """Checks if the user surpassed the PP cap for their mode and should
     be restricted."""
 
-    res = score.pp > get_pp_cap(score.c_mode)
+    res = score.pp > get_pp_cap(score.c_mode, score.mode)
     if res:
         # TODO: Maybe cache it?
-        is_verified = await sql.fetchcol(
-            "SELECT 1 FROM user_badges WHERE user = %s AND "
+        is_verified = await services.sql.fetch_val(
+            "SELECT 1 FROM user_badges WHERE user = :id AND "
             f"badge = {config.SRV_VERIFIED_BADGE} LIMIT 1",
-            (score.user_id,),
+            {"id": score.user_id},
         )
         res = not is_verified
     return res
@@ -101,8 +101,8 @@ async def log_lastfm_flag(user_id: int, flag: int, flag_text: str) -> None:
     """
 
     ts = get_timestamp()
-    await sql.execute(
+    await services.sql.execute(
         "INSERT INTO lastfm_flags (user_id, timestamp, flag_enum, falg_text) "
-        "VALUES (%s,%s,%s,%s)",
-        (user_id, ts, flag, flag_text),
+        "VALUES (:id, :time, :flag, :text)",
+        {"id": user_id, "time": ts, "flag": flag, "text": flag_text},
     )

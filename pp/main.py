@@ -2,14 +2,12 @@ import os
 from typing import Type
 from typing import TYPE_CHECKING
 
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-
-from logger import error
-from logger import info
+import logger
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
 
 if TYPE_CHECKING:
-    from scores.score import Score
+    from server.scores.score import Score
 
 # Calculators
 from .peace import CalculatorPeace
@@ -72,7 +70,7 @@ def verify_oppai() -> bool:
             # We don't return here immediately to check all directories for
             # possible errors.
             res = False
-            error(f"Required PP calculator library {path} is missing!")
+            logger.error(f"Required PP calculator library {path} is missing!")
 
     return res
 
@@ -83,7 +81,7 @@ def build_oppai() -> None:
     old_dir = os.getcwd()
 
     for dir in OPPAI_DIRS:
-        info(f"Building PP calculator {dir} ...")
+        logger.info(f"Building PP calculator {dir} ...")
         os.chdir(old_dir + dir)
         # Make it executable in case
         os.system(f"chmod +x libbuild")

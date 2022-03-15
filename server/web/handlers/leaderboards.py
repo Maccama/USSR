@@ -1,28 +1,27 @@
-# TODO: Cleanup this mess.
-from anticheat.constants.actions import Actions
-from beatmaps.beatmap import Beatmap
-from beatmaps.constants.statuses import Status
-from libs.crypt import validate_md5
-from libs.time import Timer
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from scores.constants.mods import Mods
-from scores.constants.statuses import LeaderboardTypes
-from scores.leaderboards.leaderboard import CountryLeaderboard
-from scores.leaderboards.leaderboard import FriendLeaderboard
-from scores.leaderboards.leaderboard import GlobalLeaderboard
-from scores.leaderboards.leaderboard import ModLeaderboard
-from scores.score import Score
+from __future__ import annotations
+
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.responses import Response
-from state import cache
-from user.helper import edit_user
-from user.helper import safe_name
 
-from logger import debug
-from logger import error
-from logger import info
+import logger
+from server.beatmaps.beatmap import Beatmap
+from server.constants.actions import Actions
+from server.constants.c_modes import CustomModes
+from server.constants.lb_statuses import LeaderboardTypes
+from server.constants.modes import Mode
+from server.constants.mods import Mods
+from server.constants.statuses import Status
+from server.libs.crypt import validate_md5
+from server.libs.time import Timer
+from server.scores.leaderboards.leaderboard import CountryLeaderboard
+from server.scores.leaderboards.leaderboard import FriendLeaderboard
+from server.scores.leaderboards.leaderboard import GlobalLeaderboard
+from server.scores.leaderboards.leaderboard import ModLeaderboard
+from server.scores.score import Score
+from server.state import cache
+from server.user.helper import edit_user
+from server.user.helper import safe_name
 
 # Maybe make constants?
 BASIC_ERR = "error: no"
@@ -72,7 +71,7 @@ def _log_not_served(md5: str, reason: str) -> None:
         reason (str): The reason why the leaderboard was not served.
     """
 
-    info(f"Leaderboard for MD5 {md5} could not be served ({reason})")
+    logger.info(f"Leaderboard for MD5 {md5} could not be served ({reason})")
 
 
 def error_score(msg: str) -> str:
@@ -100,7 +99,7 @@ async def leaderboard_get_handler(req: Request) -> Response:
     user_id = await cache.name.id_from_safe(safe_username)
 
     if not await cache.password.check_password(user_id, req.query_params["ha"]):
-        debug(f"{username} failed to authenticate!")
+        logger.debug(f"{username} failed to authenticate!")
         return PlainTextResponse(PASS_ERR)
 
     # Grab request args.
@@ -140,7 +139,7 @@ async def leaderboard_get_handler(req: Request) -> Response:
     elif lb_filter is LeaderboardTypes.MOD:
         lb = await ModLeaderboard.from_db(md5, c_mode, mode, mods.value)
     else:
-        error(
+        logger.error(
             f"{username} ({user_id}) requested an unimplemented leaderboard type {lb_filter!r}!",
         )
         return PlainTextResponse(error_lbs("Unimplemented leaderboard type!"))
@@ -165,7 +164,7 @@ async def leaderboard_get_handler(req: Request) -> Response:
         ],
     )
 
-    info(
+    logger.info(
         f"Beatmap {lb.bmap_fetch.console_text} / Leaderboard {lb.lb_fetch.console_text} / "
         f"PB {pb_fetch.console_text} | Served the {lb.c_mode.name} leaderboard for "
         f"{lb.bmap.song_name} to {username} in {t.time_str()}",

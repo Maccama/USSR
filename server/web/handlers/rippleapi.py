@@ -1,15 +1,14 @@
-# Implementation of the ripple api for compatibility purposes.
-from beatmaps.beatmap import Beatmap
-from beatmaps.helper import bmap_md5_from_id
-from scores.constants.c_modes import CustomModes
-from scores.constants.modes import Mode
-from scores.constants.mods import Mods
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.responses import Response
 
-from logger import info
+import logger
 from pp.main import select_calculator
+from server.beatmaps.beatmap import Beatmap
+from server.beatmaps.helper import bmap_md5_from_id
+from server.constants.c_modes import CustomModes
+from server.constants.modes import Mode
+from server.constants.mods import Mods
 
 
 async def status_handler(request: Request) -> Response:
@@ -33,11 +32,8 @@ async def pp_handler(request: Request) -> Response:
     if not beatmap_id:
         return JSONResponse({"status": 400, "message": "Missing b GET argument."}, 400)
 
-    mods = int(request.query_params.get("m", 0))
-    mods = Mods(mods)
-
-    mode = int(request.query_params.get("g", 0))
-    mode = Mode(mode)
+    mods = Mods(int(request.query_params.get("m", 0)))
+    mode = Mode(int(request.query_params.get("g", 0)))
 
     acc_str = request.query_params.get("a")
     accuracy = float(acc_str) if acc_str else None
@@ -77,7 +73,7 @@ async def pp_handler(request: Request) -> Response:
             star_rating = res[1]
             pp_result.append(res[0])
 
-    info(f"Handled PP Calculation API Request for {bmap.song_name}!")
+    logger.info(f"Handled PP Calculation API Request for {bmap.song_name}!")
 
     # Final Response!
     return JSONResponse(

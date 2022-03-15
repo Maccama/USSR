@@ -1,24 +1,24 @@
 # Rather small endpoints that don't deserve their own file.
-from anticheat.anticheat import get_flag_explanation
-from anticheat.anticheat import log_lastfm_flag
-from anticheat.constants.lastfm import LastFMFlags
-from beatmaps.beatmap import Beatmap
-from beatmaps.helper import add_bmap_rating
-from beatmaps.helper import user_rated_bmap
-from db.redis.handlers.pep import check_online
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 from starlette.responses import PlainTextResponse
 from starlette.responses import Response
-from state import cache
-from state.connection import sql
-from user.helper import fetch_user_country
-from user.helper import get_friends
-from user.helper import log_user_error
-from user.helper import safe_name
-from user.helper import update_last_active
 
-from logger import info
+import logger
+from server.anticheat.anticheat import get_flag_explanation
+from server.anticheat.anticheat import log_lastfm_flag
+from server.beatmaps.beatmap import Beatmap
+from server.beatmaps.helper import add_bmap_rating
+from server.beatmaps.helper import user_rated_bmap
+from server.constants.lastfm import LastFMFlags
+from server.db.redis.handlers.pep import check_online
+from server.state import cache
+from server.state import services
+from server.user.helper import fetch_user_country
+from server.user.helper import get_friends
+from server.user.helper import log_user_error
+from server.user.helper import safe_name
+from server.user.helper import update_last_active
 
 
 RES = "-3"  # This is returned pretty much always.
@@ -51,7 +51,7 @@ async def lastfm_handler(req: Request) -> Response:
         flags = LastFMFlags(int(bmap_arg.removeprefix("a")))
         expl_str = "\n".join(get_flag_explanation(flags))
 
-        info(
+        logger.info(
             f"User {username} ({user_id}) has been flagged with {flags!r}!\n"
             + expl_str,
         )
@@ -78,7 +78,7 @@ async def getfriends_handler(req: Request) -> Response:
         return PlainTextResponse(ERR_PASS)
 
     friend_id = await get_friends(user_id)
-    info(f"Served friends list to {username} ({user_id})")
+    logger.info(f"Served friends list to {username} ({user_id})")
     return PlainTextResponse("\n".join(map(str, friend_id)))
 
 
@@ -97,7 +97,7 @@ async def osu_error_handler(req: Request) -> Response:
     user_id = int(user_id)
     username = post_args["u"]
 
-    info(
+    logger.info(
         f"{username} ({user_id}) has experienced a client exception! Logging to the database.",
     )
     await log_user_error(
@@ -145,7 +145,7 @@ async def beatmap_rate_handler(req: Request) -> str:
         new_rating = await add_bmap_rating(user_id, bmap_md5, rating)
         bmap.rating = new_rating
 
-        info(
+        logger.info(
             f"User {username} ({user_id}) has rated {bmap.song_name} with {rating} "
             f"stars (current average {new_rating}).",
         )
@@ -158,8 +158,10 @@ async def get_seasonals_handler(req: Request) -> Response:
     """Handles `/web/osu-getseasonal.php`, returning a JSON list of seasonal
     images links."""
 
-    info("Serving seasonal backgrounds!")
-    seasonal_db = await sql.fetchall("SELECT url FROM seasonal_bg WHERE enabled = 1")
+    logger.info("Serving seasonal backgrounds!")
+    seasonal_db = await services.sql.fetch_all(
+        "SELECT url FROM seasonal_bg WHERE enabled = 1",
+    )
 
     return JSONResponse([s[0] for s in seasonal_db])
 
@@ -178,7 +180,7 @@ async def bancho_connect(req: Request) -> Response:
         return PlainTextResponse("error: pass")
 
     # TODO: Maybe some cache refreshes?
-    info(f"{username} ({user_id}) has logged in!")
+    logger.info(f"{username} ({user_id}) has logged in!")
     await update_last_active(user_id)
 
     # Endpoint responds with the country of the user for cases where
