@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import traceback
+from pathlib import Path
 
 import uvicorn
 from starlette.applications import Starlette
@@ -26,6 +27,9 @@ from server.db.redis.pubsub import pubsub_executor
 from server.state import services
 from server.state.cache import initialise_cache
 from server.state.services import create_connections
+from server.web.handlers.direct import direct_get_handler
+from server.web.handlers.direct import download_map
+from server.web.handlers.direct import get_set_handler
 from server.web.handlers.leaderboards import leaderboard_get_handler
 from server.web.handlers.misc import bancho_connect
 from server.web.handlers.misc import beatmap_rate_handler
@@ -40,8 +44,6 @@ from server.web.handlers.rippleapi import pp_handler
 from server.web.handlers.rippleapi import status_handler
 from server.web.handlers.score_sub import score_submit_handler
 from server.web.handlers.screenshot import upload_image_handler
-
-# from server.web.handlers.direct import direct_get_handler, download_map, get_set_handler
 
 try:
     __import__("uvloop").install()
@@ -68,6 +70,31 @@ def ensure_dependencies() -> int:
                 + traceback.format_exc(),
             )
             return 1
+
+    return 0
+
+
+PATHS = (
+    Path(config.SERVER_DATA_DIR),
+    Path(config.SERVER_DATA_DIR) / "maps",
+    Path(config.SERVER_DATA_DIR) / "replays",
+    Path(config.SERVER_DATA_DIR) / "replays_relax",
+    Path(config.SERVER_DATA_DIR) / "replays_ap",
+    Path(config.SERVER_DATA_DIR) / "screenshots",
+)
+
+
+def ensure_paths() -> int:
+    """Checks if paths exists, if not then create them."""
+    try:
+        for path in PATHS:
+            path.mkdir(parents=True, exist_ok=True)
+
+        # Create also the error log.
+        (Path(config.SERVER_DATA_DIR) / "err.log").touch(exist_ok=True)
+    except Exception:
+        logger.error("Error ensuring the paths!" + traceback.format_exc())
+        return 1
 
     return 0
 
@@ -118,6 +145,8 @@ async def perform_startup(redis: bool = True) -> int:
 
 
 async def on_shutdown():
+    """Closes all connections."""
+
     await services.web.close()
     await services.sql.disconnect()
     services.redis.close()
@@ -159,7 +188,7 @@ def server_start():
     )
 
     # write_log_file("Server started!")
-    logger.info(f"Server started serving on 127.0.0.1:{config.SERVER_PORT}.")
+    logger.info(f"Server started serving on http://127.0.0.1:{config.SERVER_PORT}.")
     uvicorn.run(
         app,
         host="127.0.0.1",
@@ -176,6 +205,10 @@ def main() -> int:
     # if code is not 0, then it errored.
     logger.info("Checking dependencies...")
     if (code := ensure_dependencies()) != 0:
+        return code
+
+    logger.info("Checking paths...")
+    if (code := ensure_paths()) != 0:
         return code
 
     logger.info("Starting a server...")

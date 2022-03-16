@@ -38,7 +38,7 @@ async def get_replay_web_handler(req: Request) -> Response:
     play_mode, user_id = score_data_db
     mode = Mode(play_mode)
 
-    rp = await read_replay(score_id, c_mode)
+    rp = read_replay(score_id, c_mode)
     if not rp:
         logger.error(f"Requested non-existent replay file {score_id}.osr")
         return PlainTextResponse(ERR_NOT_FOUND)
@@ -60,7 +60,7 @@ async def get_full_replay_handler(req: Request) -> Response:
     if not score:
         return PlainTextResponse("Score not found!", status_code=404)
 
-    rp = await build_full_replay(score)
+    rp = build_full_replay(score)
     if not rp:
         return PlainTextResponse("Replay not found!", status_code=404)
 

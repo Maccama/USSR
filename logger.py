@@ -1,4 +1,3 @@
-import os
 import sys
 import time
 from enum import IntEnum
@@ -76,23 +75,11 @@ def debug(text: str):
         _log(text, "DEBUG", Ansi.WHITE)
 
 
-def check_log_file() -> bool:
-    """Checks if a valit log file exists that can be written to."""
-
-    return os.path.exists("err.log")
-
-
-def ensure_log_file():
-    """Ensures that a log file is present that can be written to."""
-
-    os.mknod("err.log")
-
-
 def write_log_file(msg: str, timestamp: bool = True):
     """Appends a message to the log file."""
     text = ""
 
-    with open("err.log", "a+") as f:
+    with open(f"{config.SERVER_DATA_DIR}/err.log", "a+") as f:
         if timestamp:
             text += f"[{get_timestamp()}] "
         text += msg + "\n"

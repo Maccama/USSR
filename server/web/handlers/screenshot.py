@@ -1,7 +1,7 @@
 # The screenshot related handlers.
 import os
+from pathlib import Path
 
-from aiopath import AsyncPath as Path
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 from starlette.responses import Response
@@ -29,7 +29,8 @@ async def is_ratelimit(ip: str) -> bool:
     rl_key = "ussr:ss_limit:" + ip
     if await services.redis.get(rl_key):
         return True
-    await services.aioredisredis.set(rl_key, 1, expire=SS_DELAY)
+
+    await services.redis.set(rl_key, 1, expire=SS_DELAY)
     return False
 
 
@@ -82,11 +83,11 @@ async def upload_image_handler(req: Request) -> Response:
     # Get a random name for the file that does not overlap.
     while True:
         path = SS_PATH / (f_name := f"{gen_rand_str(SS_NAME_LEN)}.{ext}")
-        if not await path.exists():
+        if not path.exists():
             break
 
     # Write file.
-    await path.write_bytes(content)
+    path.write_bytes(content)
 
     logger.info(f"User {username} ({user_id}) has uploaded the screenshot {f_name}")
     return PlainTextResponse(f_name)

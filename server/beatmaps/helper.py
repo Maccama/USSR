@@ -1,6 +1,5 @@
+from pathlib import Path
 from typing import Optional
-
-from aiopath import AsyncPath as Path
 
 import logger
 from server import config
@@ -63,7 +62,7 @@ async def fetch_osu_file(bmap_id: int) -> str:
     """
 
     path = DIR_MAPS / f"{bmap_id}.osu"
-    if await path.exists():
+    if path.exists():
         logger.debug(f"osu beatmap file for beatmap {bmap_id} is already cached!")
         return path
 
@@ -75,18 +74,18 @@ async def fetch_osu_file(bmap_id: int) -> str:
         return logger.error(f"Invalid beatmap .osu response! PP calculation will fail!")
 
     # Write to file.
-    await path.write_text(m_str.decode())
+    path.write_text(m_str.decode())
     logger.debug(f"Beatmap cached to {path}!")
     return path
 
 
-async def delete_osu_file(bmap_id: int):
+def delete_osu_file(bmap_id: int):
     """Ensures an `.osu` beatmap file is completely deleted from cache."""
 
     path = DIR_MAPS / f"{bmap_id}.osu"
 
     try:
-        await path.unlink()
+        path.unlink()
     except Exception:
         pass
 

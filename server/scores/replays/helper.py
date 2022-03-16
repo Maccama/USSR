@@ -1,6 +1,5 @@
+from pathlib import Path
 from typing import Optional
-
-from aiopath import AsyncPath as Path
 
 import logger
 from server import config
@@ -17,33 +16,34 @@ def get_replay_path(score_id: int, c_mode: CustomModes) -> Path:
     """Gets the path of a replay with the given ID."""
 
     suffix = c_mode.to_db_suffix()
-    return DATA_DIR / f"replays{suffix}/replay_{score_id}.osr"
+    return DATA_DIR / f"replays{suffix}" / "replay_{score_id}.osr"
 
 
-async def read_replay(score_id: int, c_mode: CustomModes) -> Optional[bytes]:
+def read_replay(score_id: int, c_mode: CustomModes) -> Optional[bytes]:
     """Reads a replay with the ID from the fs."""
 
     path = get_replay_path(score_id, c_mode)
+
     # Check if it exists.
-    if not await path.exists():
+    if not path.exists():
         return
 
-    return await path.read_bytes()
+    return path.read_bytes()
 
 
-async def write_replay(score_id: int, rp: bytes, c_mode: CustomModes) -> None:
+def write_replay(score_id: int, rp: bytes, c_mode: CustomModes) -> None:
     """Writes the replay to storage."""
 
     path = get_replay_path(score_id, c_mode)
 
-    await path.write_bytes(rp)
+    path.write_bytes(rp)
 
 
 # Variables used in the headers.
 OSU_VERSION = 20211103
 
 
-async def build_full_replay(s: Score) -> Optional[BinaryWriter]:
+def build_full_replay(s: Score) -> Optional[BinaryWriter]:
     """Builds a full osu! replay featuring headers for download on the web.
 
     Args:
@@ -56,11 +56,12 @@ async def build_full_replay(s: Score) -> Optional[BinaryWriter]:
 
     path = get_replay_path(s.id, s.c_mode)
 
-    if not await path.exists():
+    if not path.exists():
         logger.debug(f"Replay {s.id}.osr does not exist.")
         return
 
-    rp = await path.read_bytes()
+    rp = path.read_bytes()
+
     # What the fuck.
     replay_md5 = hash_md5(
         "{}p{}o{}o{}t{}a{}r{}e{}y{}o{}u{}{}{}".format(
