@@ -6,11 +6,11 @@ import sys
 from dataclasses import dataclass
 
 from cli_utils import perform_startup_requirements
-from colorama import Fore
 from progressbar import progressbar
 from tabulate import tabulate
 
 import logger
+from logger import Ansi
 from server.constants.c_modes import CustomModes
 from server.constants.modes import Mode
 from server.scores.score import Score
@@ -73,10 +73,10 @@ class PPChangeResult:
 
         pp_diff = round(self.new_pp - self.old_pp, 2)
         pp_show = round(self.new_pp, 2)
-        colour = Fore.GREEN if pp_diff > 0 else Fore.RED if pp_diff < 0 else Fore.YELLOW
+        colour = Ansi.GREEN if pp_diff > 0 else Ansi.RED if pp_diff < 0 else Ansi.YELLOW
         sign = "+" if pp_diff > 0 else ""
 
-        return f"{pp_show}pp {colour}({sign}{pp_diff}){Fore.RESET}"
+        return f"{pp_show}pp {colour}({sign}{pp_diff}){Ansi.RESET}"
 
     def as_tuple(self) -> tuple[str, str, float, float]:
         """Returns the object as a tuple for printing."""
@@ -124,16 +124,16 @@ class PPChangeCalc:
         difference = round(self.new_total_pp - self.old_total_pp)
         sign = "+" if difference > 0 else ""
         colour = (
-            Fore.GREEN
+            Ansi.GREEN
             if difference > 0
-            else Fore.RED
+            else Ansi.RED
             if difference < 0
-            else Fore.YELLOW
+            else Ansi.YELLOW
         )
 
         return (
             f"{self.username}'s (estimated) total PP change: {self.old_total_pp:.2f} -> {self.new_total_pp:.2f} "
-            f"{colour}({sign}{difference}pp){Fore.RESET}"
+            f"{colour}({sign}{difference}pp){Ansi.RESET}"
         )
 
     async def load_score_diff(self) -> None:
