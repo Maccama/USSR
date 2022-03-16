@@ -261,11 +261,33 @@ async def update_country_lb_pos(
         return
     if not country:
         country = await fetch_user_country(user_id)
+
     if country.lower() == "xx" or not country:
         return
 
-    key = f"ripple:leaderboard{c_mode.to_db_suffix()}:{mode.to_db_str()}:{country}"
+    key = f"ripple:leaderboard{c_mode.to_db_suffix()}:{mode.to_db_str()}:{country.lower()}"
     await services.redis.zadd(key, pp, user_id)
+
+
+async def increment_playtime(
+    user_id: int,
+    play_time: int,
+    mode: Mode,
+    c_mode: CustomModes,
+) -> None:
+    """Increments the replays watched statistic for the user on a given mode."""
+
+    suffix = mode.to_db_str()
+    prefix = c_mode.db_prefix()
+    await services.sql.execute(
+        (
+            "UPDATE {prefix}_stats SET playtime_{suffix} = playtime_{suffix} + :play_time WHERE id = :uid"
+        ).format(suffix=suffix, prefix=prefix),
+        {
+            "play_time": play_time,
+            "uid": user_id,
+        },
+    )
 
 
 async def update_last_active(user_id: int) -> None:

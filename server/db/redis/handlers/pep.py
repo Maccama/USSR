@@ -21,7 +21,7 @@ async def bot_message(user_id: int, message: str) -> None:
     """Sends a bot message to the user."""
 
     msg = orjson.dumps(
-        {"username": await cache.name.name_from_id(user_id), "message": message},
+        {"to": await cache.name.name_from_id(user_id), "message": message},
     )
     await services.redis.publish("peppy:bot_msg", msg)
 
@@ -31,11 +31,11 @@ async def channel_message(chan: str, msg: str) -> None:
 
     msg = orjson.dumps(
         {
-            "username": chan,
+            "to": chan,
             "message": msg,
         },
     )
-    await services.redis.publish("peppy:channel_msg", msg)
+    await services.redis.publish("peppy:bot_msg", msg)
 
 
 async def announce(message: str) -> None:

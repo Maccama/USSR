@@ -59,7 +59,7 @@ def _format_score(score: Score, place: int, get_clans: bool = True) -> str:
     return (
         f"{score.id}|{name}|{round(score.score)}|{score.max_combo}|{score.count_50}|"
         f"{score.count_100}|{score.count_300}|{score.count_miss}|{score.count_katu}|"
-        f"{score.count_geki}|{int(score.full_combo)}|{score.mode.value}|"
+        f"{score.count_geki}|{int(score.full_combo)}|{score.mods.value}|"
         f"{score.user_id}|{place}|{score.timestamp}|1"
     )
 

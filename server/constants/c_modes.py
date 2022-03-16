@@ -64,6 +64,12 @@ class CustomModes(IntEnum):
 
         return _db_prefixes[self]
 
+    @classmethod
+    def all_modes() -> tuple["CustomModes"]:
+        """Returns a tuple of all possible instances of `CustomModes`."""
+
+        return _all_c_modes
+
     @property
     def acronym(self) -> str:
         """Returns the acronym for the c_mode."""
@@ -75,6 +81,13 @@ class CustomModes(IntEnum):
         """Returns the lowercase name of the c_mode."""
 
         return _word[self]
+
+    @property
+    def compatible_modes(self) -> tuple[Mode]:
+        """Returns a tuple of all Modes that are able to be used with the current
+        `CustomMode` within the game."""
+
+        return _available_modes[self]
 
 
 _db_suffixes = {
@@ -105,6 +118,18 @@ _uses_ppboard = (
     CustomModes.RELAX,
     CustomModes.AUTOPILOT,
 )
+
+_all_c_modes = (
+    CustomModes.VANILLA,
+    CustomModes.RELAX,
+    CustomModes.AUTOPILOT,
+)
+
+_available_modes = {
+    CustomModes.VANILLA: (Mode.STANDARD, Mode.TAIKO, Mode.CATCH, Mode.MANIA),
+    CustomModes.RELAX: (Mode.STANDARD, Mode.TAIKO, Mode.CATCH),
+    CustomModes.AUTOPILOT: (Mode.STANDARD,),
+}
 
 # Score offsets for each mode, avoiding queries.
 RELAX_OFFSET = 1073741823

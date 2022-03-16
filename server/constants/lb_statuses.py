@@ -1,6 +1,6 @@
 from enum import IntEnum
 
-from colorama import Fore
+from logger import Ansi
 
 
 class LeaderboardTypes(IntEnum):
@@ -17,11 +17,11 @@ class LeaderboardTypes(IntEnum):
 FETCH_TEXT = ("No Result", "Cache", "MySQL", "API", "Local")
 
 FETCH_COL = (
-    Fore.RED,  # None
-    Fore.GREEN,  # Cache
-    Fore.BLUE,  # MySQL
-    Fore.YELLOW,  # API
-    Fore.MAGENTA,  # Local
+    Ansi.RED,  # None
+    Ansi.GREEN,  # Cache
+    Ansi.BLUE,  # MySQL
+    Ansi.YELLOW,  # API
+    Ansi.MAGENTA,  # Local
 )
 
 
@@ -51,4 +51,4 @@ class FetchStatus(IntEnum):
     def console_text(self) -> str:
         """Returns the text string to be used in loggign."""
 
-        return f"{self.colour}{FETCH_TEXT[self.value]}{Fore.WHITE}"
+        return f"{self.colour!r}{FETCH_TEXT[self.value]!r}{Ansi.LBLUE!r}"

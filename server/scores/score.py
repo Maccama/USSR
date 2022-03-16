@@ -90,6 +90,29 @@ class Score:
 
         return self.id != 0
 
+    @property
+    def noncomputed_playtime(self) -> int:
+        if self.passed:
+            return self.bmap.hit_length
+
+        return self.play_time // 1000
+
+    @property
+    def computed_playtime(self) -> int:
+        if self.passed:
+            return self.bmap.hit_length
+
+        value = self.play_time
+        if self.mods & Mods.DOUBLETIME:
+            value = value // 1.5
+        elif self.mods & Mods.HALFTIME:
+            value = value // 0.75
+
+        if self.bmap.hit_length and value > self.bmap.hit_length * 1.33:
+            value = 0
+
+        return value
+
     @classmethod
     async def from_score_sub(self, post_args: dict) -> Optional["Score"]:
         """Creates an instance of `Score` from data provided in a score
@@ -153,7 +176,7 @@ class Score:
             None,
             0.0,
             0.0,
-            0,  # TODO: Playtime
+            int(post_args.get("ft")),
             0,
             score_data[12],
             0.0,
@@ -255,7 +278,7 @@ class Score:
                 f"SELECT COUNT(*) FROM {table} s INNER JOIN users u ON s.userid = "
                 f"u.id WHERE u.privileges & {Privileges.USER_PUBLIC.value} AND "
                 f"s.play_mode = {self.mode.value} AND s.completed = {Completed.BEST.value} "
-                f"AND {scoring} > :score_val AND s.beatmap_md5 = :md5",
+                f"AND {scoring} >= :score_val AND s.beatmap_md5 = :md5",
                 {"score_val": val, "md5": self.bmap.md5},
             )
         ) + 1
@@ -347,11 +370,12 @@ class Score:
 
         # And now we insert the new one.
         await services.sql.execute(
-            "INSERT INTO first_places (score_id, user_id, score, max_combo, full_combo,"
-            "mods, 300_count, 100_count, 50_count, miss_count, timestamp, mode, completed,"
+            "INSERT INTO first_places (score_id, user_id, score, max_combo, full_combo, "
+            "mods, 300_count, 100_count, 50_count, miss_count, ckatus_count, "
+            "cgekis_count, timestamp, mode, completed, "
             "accuracy, pp, play_time, beatmap_md5, relax) VALUES "
-            "(:id, :uid, :score, :max_combo, :fc, :mods, :c300, :c100, :c50, :cmiss, :time, :mode,"
-            ":completed, :acc, :pp, :play_time, :md5, :relax)",
+            "(:id, :uid, :score, :max_combo, :fc, :mods, :c300, :c100, :c50, :cmiss, "
+            ":ckatus, :cgekis, :time, :mode, :completed, :acc, :pp, :play_time, :md5, :relax)",
             {
                 "id": self.id,
                 "uid": self.user_id,
@@ -363,6 +387,8 @@ class Score:
                 "c100": self.count_100,
                 "c50": self.count_50,
                 "cmiss": self.count_miss,
+                "ckatus": self.count_katu,
+                "cgekis": self.count_geki,
                 "time": self.timestamp,
                 "mode": self.mode.value,
                 "completed": self.completed.value,
@@ -377,9 +403,9 @@ class Score:
 
         # TODO: Move somewhere else.
         msg = (
-            f"[{self.c_mode.acronym}] User [{config.SRV_URL}/u/{self.user_id} "
+            f"[{self.c_mode.acronym}] User [{config.SERVER_DOMAIN}/u/{self.user_id} "
             f"{self.username}] has submitted a #1 place on "
-            f"[{config.SRV_URL}/beatmaps/{self.bmap.id} {self.bmap.song_name}]"
+            f"[{config.SERVER_DOMAIN}/b/{self.bmap.id} {self.bmap.song_name}]"
             f" +{self.mods.readable} ({round(self.pp, 2)}pp)"
         )
         # Announce it.
@@ -426,15 +452,6 @@ class Score:
         if self.placement == 1 and not restricted:
             await self.on_first_place()
 
-        # Insert to cache after score ID is assigned.
-        if (
-            clear_lbs
-            and self.completed is Completed.BEST
-            and self.bmap.has_leaderboard
-            and not restricted
-        ):
-            self.insert_into_lb_cache()
-
     async def __insert(self) -> None:
         """Inserts the score directly into the database. Also assigns the
         `id` attribute to the score ID."""
@@ -448,7 +465,7 @@ class Score:
             f"INSERT INTO {table} (beatmap_md5, userid, score, max_combo, full_combo, mods, "
             "300_count, 100_count, 50_count, katus_count, gekis_count, misses_count, time, "
             "play_mode, completed, accuracy, pp) VALUES (:md5, :uid, :score, :combo, :fc, :mods, :c300, :c100, "
-            ":c50, :ckatus, :cgekis, :cmiss, :time, :mode, :completed, :accuracy, :pp)",
+            ":c50, :ckatus, :cgekis, :cmiss, :time, :mode, :completed, :accuracy, :pp, :playtime)",
             {
                 "md5": self.bmap.md5,
                 "uid": self.user_id,
@@ -467,6 +484,7 @@ class Score:
                 "completed": self.completed.value,
                 "accuracy": self.accuracy,
                 "pp": self.pp,
+                "playtime": self.computed_playtime,
             },
         )
 

@@ -118,13 +118,13 @@ async def insert_replay_data(replay_path: str):
         raise SystemExit(1)
 
     logger.info("Fetching previous best to compare..")
-    prev_db = await services.sql.fetch_one(
+    prev_id = await services.sql.fetch_val(
         f"SELECT id FROM {stats.c_mode.db_table} WHERE userid = :id AND "
         "beatmap_md5 = :md5 AND completed = 3 AND play_mode = :mode LIMIT 1",
         {"id": s.user_id, "md5": s.bmap.md5, "mode": s.mode.value},
     )
 
-    prev_score = await Score.from_db(prev_db[0], s.c_mode) if prev_db else None
+    prev_score = await Score.from_db(prev_id, s.c_mode) if prev_id else None
 
     logger.info("Submitting score..")
     await s.submit()

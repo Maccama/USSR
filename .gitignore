@@ -132,3 +132,5 @@ config.json
 .vscode/
 test_data/
 .data/
+ussr.env
+.data

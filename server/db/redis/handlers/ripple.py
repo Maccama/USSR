@@ -2,7 +2,7 @@
 # based servers.
 import orjson
 
-from server.constants.privileges import Privileges
+import logger
 from server.state import cache
 
 
@@ -55,6 +55,8 @@ async def username_change_pubsub(data: bytes):
         if leaderboard.user_has_score(user_id):
             leaderboard.change_username(user_id, new_username)
 
+    logger.info(f"Handled username change for user ID {user_id} -> {new_username}")
+
 
 async def update_cached_privileges_pubsub(data: bytes):
     """
@@ -73,7 +75,7 @@ async def change_pass_pubsub(data: bytes):
     """
 
     j_data = orjson.loads(data)
-    user_id = int(j_data["userID"])
+    user_id = int(j_data["user_id"])
 
     cache.password.drop_cache_individual(user_id)
 
@@ -88,6 +90,6 @@ async def ban_reload_pubsub(data: bytes):
     await cache.priv.load_singular(user_id)
 
     # If they have been restricted, we clear all leaderboard with them in.
-    if not await cache.priv.get_privilege(user_id) & Privileges.USER_PUBLIC:
+    if (await cache.priv.get_privilege(user_id)).is_not_allowed:
         for leaderboard in cache.leaderboards.get_all_items():
             await leaderboard.refresh()

@@ -3,6 +3,7 @@ from server import config
 from server.constants.c_modes import CustomModes
 from server.constants.lastfm import LastFMFlags
 from server.constants.modes import Mode
+from server.constants.statuses import Status
 from server.libs.time import get_timestamp
 from server.scores.score import Score
 from server.state import services
@@ -21,6 +22,8 @@ def get_pp_cap(c_mode: CustomModes, mode: Mode) -> int:
 async def surpassed_cap_restrict(score: Score) -> bool:
     """Checks if the user surpassed the PP cap for their mode and should
     be restricted."""
+    if score.bmap.status == Status.LOVED:
+        return False
 
     res = score.pp > get_pp_cap(score.c_mode, score.mode)
     if res:
@@ -84,6 +87,8 @@ def get_flag_explanation(flag: LastFMFlags) -> list[str]:
             if not text_append:
                 text_append = f"Undocumented Flag: {LastFMFlags(cur_bit)!r}"
             res.append(text_append)
+
+        cur_bit <<= 1
 
     return res
 

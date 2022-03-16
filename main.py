@@ -19,6 +19,8 @@ from server.db.redis.handlers.rosu import (
     clan_update_pubsub,
 )
 from server.db.redis.handlers.ussr import drop_bmap_cache_pubsub
+from server.db.redis.handlers.ussr import recalc_pp_pubsub
+from server.db.redis.handlers.ussr import recalc_user_pubsub
 from server.db.redis.handlers.ussr import refresh_leaderboard_pubsub
 from server.db.redis.pubsub import pubsub_executor
 from server.state import services
@@ -81,6 +83,8 @@ PUBSUB_REGISTER = (
     # USSR
     (drop_bmap_cache_pubsub, "ussr:bmap_decache"),
     (refresh_leaderboard_pubsub, "ussr:lb_refresh"),
+    (recalc_pp_pubsub, "ussr:recalc_pp"),
+    (recalc_user_pubsub, "ussr:recalc_user"),
 )
 STARTUP_TASKS = (
     create_connections,

@@ -25,6 +25,7 @@ from server.state import cache
 from server.state import services
 from server.user.helper import edit_user
 from server.user.helper import get_achievements
+from server.user.helper import increment_playtime
 from server.user.helper import unlock_achievement
 from server.user.helper import update_country_lb_pos
 from server.user.helper import update_lb_pos
@@ -90,7 +91,7 @@ async def score_submit_handler(req: Request) -> Response:
 
     # TODO: version check.
     dupe_check = (
-        await services.sql.fetchcol(  # Try to fetch as much similar score as we can.
+        await services.sql.fetch_val(  # Try to fetch as much similar score as we can.
             f"SELECT 1 FROM {s.c_mode.db_table} WHERE "
             "userid = :id AND beatmap_md5 = :md5 AND score = :score "
             "AND play_mode = :mode AND mods = :mods LIMIT 1",
@@ -129,7 +130,7 @@ async def score_submit_handler(req: Request) -> Response:
     logger.debug("Submitting score...")
     await s.submit(restricted=privs.is_not_allowed)
 
-    if (
+    if (  # this is stupid but circular imports are pain.
         s.completed is Completed.BEST
         and s.bmap.has_leaderboard
         and not privs.is_not_allowed
@@ -138,8 +139,9 @@ async def score_submit_handler(req: Request) -> Response:
         if lb is not None:
             lb.insert_user_score(s)
 
-    logger.debug("Incrementing bmap playcount.")
+    logger.debug("Incrementing bmap playcount and user playtime.")
     await s.bmap.increment_playcount(s.passed)
+    await increment_playtime(s.user_id, s.noncomputed_playtime, s.mode, s.c_mode)
 
     # Stat updates
     logger.debug("Updating stats.")
@@ -151,14 +153,17 @@ async def score_submit_handler(req: Request) -> Response:
     if prev_score and s.completed == Completed.BEST:
         add_score -= prev_score.score
 
-    if s.passed and s.bmap.has_leaderboard:
+    if s.passed and s.bmap.has_leaderboard and not privs.is_not_allowed:
         if s.bmap.status == Status.RANKED:
             stats.ranked_score += add_score
+
         if stats.max_combo < s.max_combo:
             stats.max_combo = s.max_combo
+
         if s.completed == Completed.BEST and s.pp:
             logger.debug("Performing PP recalculation.")
             await stats.recalc_pp_acc_full(s.pp)
+
     logger.debug("Saving stats")
     await stats.save()
 
@@ -183,7 +188,7 @@ async def score_submit_handler(req: Request) -> Response:
     # Update our position on the global lbs.
     if (
         s.completed is Completed.BEST
-        and privs & Privileges.USER_PUBLIC
+        and not privs.is_not_allowed
         and old_stats.pp != stats.pp
     ):
         logger.debug("Updating user's global and country lb positions.")
@@ -202,11 +207,12 @@ async def score_submit_handler(req: Request) -> Response:
 
     # At the end, check achievements.
     new_achievements = []
-    if s.passed and s.bmap.has_leaderboard:
+    if s.passed and s.bmap.has_leaderboard and not privs.is_not_allowed:
         db_achievements = await get_achievements(s.user_id)
         for ach in cache.achievements:
             if ach.id in db_achievements:
                 continue
+
             if ach.cond(s, s.mode.value, stats):
                 await unlock_achievement(s.user_id, ach.id)
                 new_achievements.append(ach.full_name)
@@ -248,6 +254,18 @@ async def score_submit_handler(req: Request) -> Response:
         )
     )
 
+    # Lastly but not least, get the rank from our statistic api,
+    # because it should be frozen now, it will work for us, but i dont know how about individuals.
+    if privs.is_not_allowed:
+        mode_str = s.mode.to_db_str()
+        c_mode_str = s.c_mode.acronym.lower()
+        frozen_rank = await services.redis.lrange(
+            f"statistik:rank_graph:{s.user_id}:{c_mode_str}:{mode_str}",
+            -1,
+            -1,
+        )
+        stats.rank = int(frozen_rank) if frozen_rank else 0
+
     if s.bmap.has_leaderboard:
         # Beatmap ranking panel.
         panels.append(
@@ -276,7 +294,8 @@ async def score_submit_handler(req: Request) -> Response:
             ),
         )
 
-    # Overall ranking panel. XXX: Apparently unranked maps gets overall charts.
+    # Overall ranking panel.
+    # XXX: Apparently unranked maps gets overall charts.
     panels.append(
         "|".join(
             (

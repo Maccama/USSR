@@ -12,6 +12,20 @@ class Mode(IntEnum):
 
         return _mode_str_conv[self.value]
 
+    @classmethod
+    def all_modes() -> tuple["Mode"]:
+        """Retuns a tuple of all modes."""
+
+        return _all_modes
+
+
+_all_modes = (
+    Mode.STANDARD,
+    Mode.TAIKO,
+    Mode.CATCH,
+    Mode.MANIA,
+)
+
 
 _mode_str_conv = {
     Mode.STANDARD: "std",

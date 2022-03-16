@@ -71,11 +71,11 @@ async def fetch_osu_file(bmap_id: int) -> str:
     async with services.web.get(OSU_DL_DIR + str(bmap_id)) as resp:
         m_str = await resp.read()
 
-    if not m_str:
+    if (not m_str) or "<html>" in m_str:
         return logger.error(f"Invalid beatmap .osu response! PP calculation will fail!")
 
     # Write to file.
-    await path.write_text(m_str)
+    await path.write_text(m_str.decode())
     logger.debug(f"Beatmap cached to {path}!")
     return path
 

@@ -7,6 +7,7 @@ from functools import cache
 from server import config
 
 __all__ = (
+    "Ansi",
     "info",
     "error",
     "warning",
@@ -89,9 +90,10 @@ def ensure_log_file():
 
 def write_log_file(msg: str, timestamp: bool = True):
     """Appends a message to the log file."""
+    text = ""
 
     with open("err.log", "a+") as f:
         if timestamp:
-            f.write(f"[{get_timestamp()}] {msg}\n")
-        else:
-            f.write(msg)
+            text += f"[{get_timestamp()}] "
+        text += msg + "\n"
+        f.write(text)
